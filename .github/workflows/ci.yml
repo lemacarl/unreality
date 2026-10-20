@@ -1,0 +1,96 @@
+# CI for every pull request and for main. The single job is named `ci`;
+# that is the status check to require in branch protection (see
+# CONTRIBUTING.md, "CI"). No secrets are used; signing is disabled.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: ci
+    # Pinned image (arm64). Xcode is pinned separately below; both are listed
+    # at https://github.com/actions/runner-images.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load pinned tool versions
+        run: grep -E '^[A-Z0-9_]+=' scripts/ci/tool-versions.env >> "$GITHUB_ENV"
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch "/Applications/Xcode_${XCODE_VERSION}.app"
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen and SwiftLint (pinned, checksum-verified)
+        run: scripts/ci/install-tools.sh "$RUNNER_TEMP/ci-tools" >> "$GITHUB_PATH"
+
+      - name: Check tool versions
+        run: scripts/ci/check-tool-versions.sh
+
+      - name: Check SwiftLint escape hatches
+        run: scripts/ci/check-lint-escape-hatches.sh
+
+      - name: Check bundle ID (sources)
+        run: scripts/ci/check-bundle-id.sh
+
+      - name: SwiftLint
+        run: swiftlint lint --strict --no-cache --reporter github-actions-logging
+
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .build/checkouts
+            .build/repositories
+            ~/Library/Caches/org.swift.swiftpm
+            .build/xcode/SourcePackages
+          key: spm-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.XCODE_VERSION }}-
+
+      - name: Build packages
+        run: swift build
+
+      - name: Unit tests
+        run: swift test
+
+      - name: Check UnrealityCore imports (compiler backstop)
+        run: python3 scripts/ci/check-core-imports.py
+
+      # After SwiftLint (so a plain lint error is reported there) and after
+      # `swift build` (the core-import cases need the built GRDB module).
+      - name: Self-test the CI guards
+        run: scripts/ci/selftest.sh
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build app
+        run: >-
+          xcodebuild build
+          -project Unreality.xcodeproj
+          -scheme Unreality
+          -configuration Debug
+          -destination 'platform=macOS'
+          -derivedDataPath .build/xcode
+          CODE_SIGNING_ALLOWED=NO
+
+      - name: Check bundle ID (built app)
+        run: scripts/ci/check-bundle-id.sh --app .build/xcode/Build/Products/Debug/Unreality.app

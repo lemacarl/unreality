@@ -15,3 +15,6 @@ xcuserdata/
 
 # Per-developer signing overrides (team IDs); see Config/Local.xcconfig.example
 Config/Local.xcconfig
+
+# Python bytecode (CI scripts)
+__pycache__/
