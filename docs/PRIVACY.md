@@ -1,6 +1,6 @@
 # Privacy
 
-Target behaviour (only Keychain storage of the API key is implemented so far; this document is updated with every capture-related change).
+Target behaviour (implemented so far: Keychain storage of the API key (#14) and local SQLite storage (#16); no capture yet. This document is updated with every capture-related change).
 
 | Signal | Stored | Retention | Leaves device |
 |---|---|---|---|
@@ -8,6 +8,8 @@ Target behaviour (only Keychain storage of the API key is implemented so far; th
 | Webcam frames | **Never stored**; only a yes/no presence flag | Flag kept with timeline | Only aggregated presence totals, as summarisation input; never frames |
 | Screenshots | Small thumbnail + OCR text; raw capture deleted after the raw-retention window (default to be set in #27, expected <= 24 h) | Raw: that window; thumbnails and text: user-configurable, default set in #26 | OCR text only, as summarisation input (see below); never the image |
 | Summaries | Yes | Configurable | Input text sent to Claude API (configurable, text only) |
+
+Storage: one SQLite file, `~/Library/Application Support/com.lemacarl.unreality/unreality.sqlite`. Every open makes the folder owner-only (0700) and the database, `-wal` and `-shm` files owner-only (0600). SQLite `secure_delete` is on, so deleted pages are zeroed in the database file once checkpointed; the write-ahead log (`unreality.sqlite-wal`) may still hold old page images until it is truncated (automatic PASSIVE checkpoints do not), so the retention deletes run `wal_checkpoint(TRUNCATE)` after purging. Retention deletes only events that ended strictly before the cutoff and never deletes open sessions. The app is not sandboxed: like any non-sandboxed app's files, other processes running as the same macOS user can read the database. Time Machine backups and APFS local snapshots may hold copies that retention and delete-all cannot reach. Schema: [ARCHITECTURE.md](ARCHITECTURE.md#storage).
 
 Defaults: password managers, banking and messaging apps excluded; global pause hotkey; visible capture indicator; API key stored in the macOS Keychain only (implemented in #14: login keychain, not iCloud-synchronised, never logged; see ARCHITECTURE.md, "Secrets").
 

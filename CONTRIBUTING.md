@@ -19,12 +19,12 @@ Build commands are in the [README](README.md#build-and-run). Layout: `Sources/Un
 ## Lint rules
 Two custom SwiftLint rules in `.swiftlint.yml` keep the core free of OS frameworks. They are a regex-based guard; a CI backstop is tracked in #11.
 
-- `core_no_os_imports`: files in `Sources/UnrealityCore` may import only Foundation, Dispatch, Observation, Synchronization and RegexBuilder.
+- `core_no_os_imports`: files in `Sources/UnrealityCore` may import only Foundation, Dispatch, Observation, Synchronization, RegexBuilder and GRDB (storage, ADR 0002).
 - `core_tests_no_os_imports`: files in `Tests/UnrealityCoreTests` may import the same modules plus UnrealityCore and Testing.
 
-Both are allow-lists. They ignore comments and strings, and catch attributed, access-level, scoped and backticked imports (`@preconcurrency import X`, `internal import X`, `public import X`, `import struct X.Y`, ``import `X` ``) as well as an import after other code on the same line. Known residual (contrived): a comment between `import` and the module name (`import /* c */ AppKit`). New core dependencies (GRDB, via the storage issue #16) must be added to the list in the same PR as their ADR.
+GRDB is not allowed in `Tests/UnrealityCoreTests`: tests use the core's storage API on in-memory databases. Both are allow-lists. They ignore comments and strings, and catch attributed, access-level, scoped and backticked imports (`@preconcurrency import X`, `internal import X`, `public import X`, `import struct X.Y`, ``import `X` ``) as well as an import after other code on the same line. Known residual (contrived): a comment between `import` and the module name (`import /* c */ AppKit`). New core dependencies must be added to the list in the same PR as their ADR.
 
-To check the rules after editing them, add throwaway probe files such as `Sources/UnrealityCore/ZZProbe1.swift` containing `@preconcurrency import AVFoundation`, `ZZProbe2.swift` containing `internal import AVFoundation` and `ZZProbe3.swift` containing `import struct Foundation.Data` (and the same in `Tests/UnrealityCoreTests`). Run `swiftlint lint --strict` on each, confirm the first two are flagged by the rule for that folder and the third is clean, then delete the probes.
+To check the rules after editing them, add throwaway probe files such as `Sources/UnrealityCore/ZZProbe1.swift` containing `@preconcurrency import AVFoundation`, `ZZProbe2.swift` containing `internal import AVFoundation`, `ZZProbe3.swift` containing `import struct Foundation.Data` and `ZZProbe4.swift` containing `import GRDB` (and the same in `Tests/UnrealityCoreTests`). Run `swiftlint lint --strict` on each, confirm the first two are flagged by the rule for that folder, the third is clean, and `import GRDB` is clean in the core but flagged in its tests, then delete the probes.
 
 ## Manual checks
 Some behaviour cannot run in CI. Run these locally when a PR carries the `needs-manual-test` label for them, and say in the PR that you did.
@@ -39,8 +39,9 @@ Pinned build tools (ADR 0002). Maintenance health re-checked 2026-10-20.
 | Xcode / Swift | 26.1.1 / 6.2.1 | — | — |
 | XcodeGen | 2.46.0 | MIT | Latest release 2026-07-16; commits within the last week; not archived |
 | SwiftLint | 0.65.1 | MIT | Latest release 2026-08-21; commits within the last week; not archived |
+| GRDB.swift (runtime) | 7.11.1 (`exact:` in `Package.swift`, locked in `Package.resolved`) | MIT | Re-checked 2026-10-20 (#16): latest release v7.11.1 (2026-06-18); last commit 2026-08-08, last push 2026-09-29; 14 open issues; not archived |
 
-`project.yml` enforces `minimumXcodeGenVersion`. Runtime dependency GRDB.swift is not added yet; the M2 storage issue pins it (latest release at last check: v7.11.1, 2026-06-18, actively maintained).
+`project.yml` enforces `minimumXcodeGenVersion`. GRDB is the only runtime dependency; bump it deliberately in its own PR and re-check health.
 
 ## Agents and models
 | Role | Model | Effort | Used for |

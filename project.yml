@@ -29,6 +29,8 @@ targets:
     sources:
       - path: App/Sources
     dependencies:
+      # UnrealityCore brings GRDB (ADR 0002) in transitively; Xcode resolves
+      # it from Package.swift / Package.resolved.
       - package: Unreality
         product: UnrealityCore
       - package: Unreality
