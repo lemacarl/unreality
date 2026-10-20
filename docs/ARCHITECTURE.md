@@ -1,6 +1,6 @@
 # Architecture
 
-Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16), a global pause hotkey (#15), a settings window backed by `SettingsStore` (#13) and the frontmost app / window title activity source (#17, not yet wired into the app); no capture is recorded yet.
+Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16), a global pause hotkey (#15), a settings window backed by `SettingsStore` (#13) the frontmost app / window title activity source (#17, not yet wired into the app) and the privacy filter in front of storage (#20); no capture is recorded yet.
 
 ```mermaid
 flowchart LR
@@ -57,7 +57,7 @@ Frontmost app and focused window title (#17). Protocols and fakes in UnrealityCo
 | Path | Contents |
 |---|---|
 | `Package.swift` | SwiftPM manifest: `UnrealityCore`, `UnrealityPlatform` libraries and their test targets |
-| `Sources/UnrealityCore` | Pure logic and storage (`Storage/`). Allow-listed imports only (Foundation, Dispatch, Observation, Synchronization, RegexBuilder, GRDB); other imports are a lint error (`core_no_os_imports`, and `core_tests_no_os_imports` for `Tests/UnrealityCoreTests`, which also allows UnrealityCore and Testing). Regex-based guard, backed in CI by a compiler check of the module's actual imports (`scripts/ci/check-core-imports.py`) |
+| `Sources/UnrealityCore` | Pure logic, the privacy filter (`Privacy/`) and storage (`Storage/`). Allow-listed imports only (Foundation, Dispatch, Observation, Synchronization, RegexBuilder, GRDB); other imports are a lint error (`core_no_os_imports`, and `core_tests_no_os_imports` for `Tests/UnrealityCoreTests`, which also allows UnrealityCore and Testing). Regex-based guard, backed in CI by a compiler check of the module's actual imports (`scripts/ci/check-core-imports.py`) |
 | `scripts/ci/` + `.github/workflows/ci.yml` | CI workflow and its guard scripts; pinned tool versions in `scripts/ci/tool-versions.env` |
 | `Sources/UnrealityPlatform` | Real OS integrations; depends on the core |
 | `Tests/` | Swift Testing suites per library |
@@ -104,15 +104,23 @@ Secrets (the Claude API key) live only in the macOS Keychain (#14). `UnrealityCo
 - Contract (get missing = `nil`, set inserts or replaces, remove is idempotent, keys independent) is unit-tested against the fake; the same checks run against the real Keychain only on demand (`UNREALITY_KEYCHAIN_TESTS=1`, see CONTRIBUTING.md, "Manual checks").
 - The settings UI for entering the key arrives in M5.
 
+## Privacy filter
+`Sources/UnrealityCore/Privacy` (#20): a pure function layer between capture sources and storage, with no capture or UI code. Behaviour, defaults and limits: [PRIVACY.md](PRIVACY.md#privacy-filter).
+
+- Capture sources report an `ActivitySample` (raw, with the unredacted URL). `PrivacyFilter.evaluate(_:)` returns `.keep(FilteredEvent)` or `.drop(PrivacyDropReason)` (`excludedApp`, `excludedSite`, `uncheckableURL`; reasons carry no captured data). `filter(_:)` returns the event or `nil`, and also takes a batch.
+- `PrivacyFilter(blocklist:urlRedaction:)` defaults to `Blocklist.defaults` (built from `DefaultExclusions`) and `URLRedaction.keepPath`. User entries are added with `Blocklist.defaults.union(Blocklist(bundleIDPatterns:domains:))`; persisting them and the settings UI come in M6.
+- `FilteredEvent` has a `fileprivate` initialiser in `PrivacyFilter.swift` and is not `Decodable`, so only the filter creates one. `ActivityRepository.insert(_:)` takes only a `FilteredEvent`; the convenience `insert(_:filteredBy:)` filters a sample and stores the result, returning `nil` (and writing nothing) when it was dropped. `ActivityEvent`, the read model, is `FetchableRecord` but not persistable: the GRDB repository writes rows through an internal `EventInsertRecord` built from a `FilteredEvent`. Repository fakes build their return value with `ActivityEvent(_:id:)`.
+- `ActivitySample`, `FilteredEvent` and `ActivityEvent` redact window titles and URLs in `description`, `debugDescription` and `dump`. Never log titles or URLs.
+
 ## Data flow
 Platform sources emit samples (`ActivityCoordinator` gates them on pause state and Accessibility trust) → privacy filter drops excluded apps/sites (before capture or OCR where possible, always before storage) → dedupe skips unchanged screens → events/OCR text/presence booleans written to SQLite → retention job deletes raw captures after the window → summariser sends text only to the Claude API.
 
 ## Storage
 SQLite via GRDB.swift 7.11.1 ([ADR 0002](decisions/0002-initial-dependencies.md)), in `Sources/UnrealityCore/Storage` (#16).
 
-- **`DatabaseManager`** opens the database and runs all pending migrations before returning. `open(in:)` takes an injectable directory (the app passes `defaultDirectory()`, `~/Library/Application Support/com.lemacarl.unreality`) and opens `unreality.sqlite` there, setting the folder to 0700 and the database, `-wal` and `-shm` files to 0600 on every open; `inMemory()` gives each test a private, migrated database. Every connection sets `PRAGMA secure_delete = ON`; GRDB enables foreign keys.
+- **`DatabaseManager`** opens the database and runs all pending migrations before returning. `open(in:)` takes an injectable directory (the app passes `defaultDirectory()`, `~/Library/Application Support/com.lemacarl.unreality`) and opens `unreality.sqlite` there, setting the folder to 0700 and the database, `-wal` and `-shm` files to 0600 on every open; `inMemory()` gives each test a private, migrated database. Every connection sets `PRAGMA secure_delete = ON`; GRDB enables foreign keys. `publicStatementArguments` is set off explicitly (never turn it on), so GRDB errors and traces never include stored values such as titles and URLs.
 - **Migrations** (`Migrations.swift`) use GRDB's `DatabaseMigrator`, which records applied identifiers in `grdb_migrations` and runs each once, in order, from an empty file. Shipped migrations are never edited; schema changes add a new one. `appliedMigrations()` lists what ran.
-- **`ActivityRepository`** (protocol) is the storage API for the rest of the app; `GRDBActivityRepository` implements it. Fakes for other features conform to the protocol. Retention jobs (#26, #27) call its `deleteEvents(endedBefore:)` (events whose `ended_at` is strictly before the cutoff; an event spanning it stays) and `deleteSessions(endedBefore:)` (closed sessions only; open sessions are never deleted) hooks. Both then run `wal_checkpoint(TRUNCATE)`: with `secure_delete`, deleted pages are zeroed in the main file once checkpointed, but `-wal` may retain old page images until it is truncated, which automatic (PASSIVE) checkpoints never do.
+- **`ActivityRepository`** (protocol) is the storage API for the rest of the app; `GRDBActivityRepository` implements it. Its insert accepts only a `FilteredEvent` (see Privacy filter). Fakes for other features conform to the protocol. Retention jobs (#26, #27) call its `deleteEvents(endedBefore:)` (events whose `ended_at` is strictly before the cutoff; an event spanning it stays) and `deleteSessions(endedBefore:)` (closed sessions only; open sessions are never deleted) hooks. Both then run `wal_checkpoint(TRUNCATE)`: with `secure_delete`, deleted pages are zeroed in the main file once checkpointed, but `-wal` may retain old page images until it is truncated, which automatic (PASSIVE) checkpoints never do.
 
 ### Schema (migration `v1_events_sessions`)
 Dates are GRDB `datetime` values: UTC text `YYYY-MM-DD HH:MM:SS.SSS` (millisecond precision, sorts chronologically).
@@ -133,7 +141,7 @@ Dates are GRDB `datetime` values: UTC text `YYYY-MM-DD HH:MM:SS.SSS` (millisecon
 | `kind` | TEXT NOT NULL | `app`, `web` or `idle` (`ActivityEventKind`); no CHECK, so new kinds need no table rebuild |
 | `app_bundle_id` | TEXT NULL | frontmost app; `NULL` for idle |
 | `window_title` | TEXT NULL | |
-| `url` | TEXT NULL | web only; stored already redacted by the privacy filter |
+| `url` | TEXT NULL | web only; redacted by the privacy filter (no query, fragment or credentials) |
 | `started_at` | DATETIME NOT NULL | indexed |
 | `ended_at` | DATETIME NOT NULL | indexed (retention); CHECK `ended_at >= started_at` |
 | `source` | TEXT NOT NULL | capture source that produced the event |
