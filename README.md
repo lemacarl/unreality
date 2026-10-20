@@ -22,7 +22,7 @@ xcodebuild -scheme Unreality -destination 'platform=macOS' build CODE_SIGNING_AL
 swiftlint --strict
 ```
 
-To run the app, open the generated `Unreality.xcodeproj` in Xcode and run the `Unreality` scheme, or build with signing enabled (drop `CODE_SIGNING_ALLOWED=NO`; the project signs ad hoc by default, see `Config/Signing.xcconfig`) and launch the `.app` from the build products. It is menu-bar only: look for the eye icon in the menu bar; there is no Dock icon or window. `CODE_SIGNING_ALLOWED=NO` builds are for compiling/CI only and may not launch.
+To run the app, open the generated `Unreality.xcodeproj` in Xcode and run the `Unreality` scheme, or build with signing enabled (drop `CODE_SIGNING_ALLOWED=NO`; the project signs ad hoc by default, see `Config/Signing.xcconfig`) and launch the `.app` from the build products. It is menu-bar only: look for the eye icon in the menu bar (crossed out while capture is paused) and click it for the status popover with Pause/Resume and Quit; there is no Dock icon or window. `CODE_SIGNING_ALLOWED=NO` builds are for compiling/CI only and may not launch.
 
 ### Permissions
 The current shell requests no permissions. As features land, Unreality will ask for:
