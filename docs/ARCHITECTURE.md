@@ -1,6 +1,6 @@
 # Architecture
 
-Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16), a global pause hotkey (#15) and a settings window backed by `SettingsStore` (#13); no capture yet.
+Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16), a global pause hotkey (#15), a settings window backed by `SettingsStore` (#13) and the frontmost app / window title activity source (#17, not yet wired into the app); no capture is recorded yet.
 
 ```mermaid
 flowchart LR
@@ -24,7 +24,7 @@ flowchart LR
 - **App** — SwiftUI/AppKit shell, generated via XcodeGen.
 
 ## Menu bar and capture state
-- `CaptureStateStore` (UnrealityCore) is the single source of truth for whether capture is `running` or `paused`. It is `@MainActor` and `@Observable` (Observation framework), exposes `state`, `isPaused`, `pause()`, `resume()` and `toggle()`, ignores same-state writes, and starts in `running`. It holds state only; it is not persisted across launches. The global pause hotkey (#15) calls `toggle()`, and the capture pipeline (M3) will observe it.
+- `CaptureStateStore` (UnrealityCore) is the single source of truth for whether capture is `running` or `paused`. It is `@MainActor` and `@Observable` (Observation framework), exposes `state`, `isPaused`, `pause()`, `resume()`, `toggle()` and `onChange(_:)` (synchronous, cancellable change handlers for non-UI code such as `ActivityCoordinator`), ignores same-state writes, and starts in `running`. It holds state only; it is not persisted across launches. The global pause hotkey (#15) calls `toggle()`, and the capture pipeline (M3) will observe it.
 - The app owns one store via `AppModel` (App/Sources/AppModel.swift), which `AppDelegate` (wired with `@NSApplicationDelegateAdaptor`) creates and keeps for the app's lifetime, so the global hotkey handler and SwiftUI share it. `UnrealityApp` shows it through a SwiftUI `MenuBarExtra` with `.window` style (a popover-like panel). The status item is a template SF Symbol (`eye` running, `eye.slash` paused) so macOS tints it for light and dark menu bars. The popover shows the state, a Pause/Resume button and Quit (Cmd-Q). Display strings and symbol names live in the app (`StatusPopover.swift`), not the core.
 - The popover also shows the pause shortcut, or that it could not be registered, and a "Settings…" button (Cmd-,) that opens the settings window (see [Settings](#settings)).
 - `MenuBarExtra` is sufficient for now; switch to `NSStatusItem` + `NSPopover` (ADR 0001) only if it proves limiting.
@@ -39,6 +39,19 @@ Protocols in UnrealityCore, real implementations in UnrealityPlatform, fakes in 
 | `HotkeyRegistrar` (`@MainActor`) | `CarbonHotkeyRegistrar` (`RegisterEventHotKey`; no Accessibility or Input Monitoring permission, sees only its own combination) | `FakeHotkeyRegistrar` with `press(_:)` |
 
 `PauseHotkeyController` (core) binds a `Hotkey` to `CaptureStateStore.toggle()`. The default is `Hotkey.defaultPause`, Control-Option-Command-P (key code 35: a physical key position, labelled P on QWERTY layouts; other layouts may show a different letter there, and deriving the label from the layout is for the settings UI); override it in code via `AppModel(pauseHotkey:)`; the settings window shows it read-only and rebinding is not built yet. If registration fails the app logs the OS status and the popover says the shortcut could not be registered; it does not guess why. Only refusals the OS reports are detectable (for example `eventHotKeyExistsErr` for a combination already registered in this process). A combination held by another app, or a system shortcut, is not detected: `RegisterEventHotKey` returns `noErr` and presses may never arrive. So the menu-bar icon and popover, not the shortcut, are the source of truth for pause state. `CarbonHotkeyRegistrar` and `PauseHotkeyController` release their registrations in `deinit`, so they must be released on the main thread (their main-actor owner, `AppModel`, ensures this). Launch at login (`LoginItemService` via `SMAppService`) is tracked in #56.
+
+## Activity source
+Frontmost app and focused window title (#17). Protocols and fakes in UnrealityCore, real implementations in UnrealityPlatform; all main-actor bound and event driven (no polling).
+
+| Protocol (core) | Real (platform) | Fake (core) |
+|---|---|---|
+| `ActivitySource`: `start(windowTitlePolicy:handler:)`, `stop()` | `WorkspaceActivitySource` | `FakeActivitySource` with `activate(_:title:)` and `setTitle(_:)` |
+| `AccessibilityTrust`: `currentState()` (never prompts), `requestAccess()` (prompts; explicit user action only) | `SystemAccessibilityTrust` (`AXIsProcessTrusted`, `AXIsProcessTrustedWithOptions`) | `FakeAccessibilityTrust` |
+
+- **`ActivitySample`** is the raw, unfiltered sample type the privacy filter (#20) wraps: `timestamp`, `trigger` (`snapshot` on start/resume, `appActivated`, `titleChanged`), `app` (`FrontmostApp`: bundle ID, localised name, process ID) and an optional `windowTitle`. It is not a storage record; turning samples into `ActivityEvent` spans is a later pipeline step.
+- **`WorkspaceActivitySource`** listens for `NSWorkspace.didActivateApplicationNotification`. Before reading a title it asks the `WindowTitlePolicy` closure; only if that allows it does it look up `kAXFocusedWindowAttribute`, read that window's `kAXTitleAttribute` via `AXUIElement`, and register an `AXObserver` on that one app for `kAXFocusedWindowChangedNotification` and the focused window's `kAXTitleChangedNotification` (run-loop source in the main run loop's common modes). Unreality's own process is always app-only: the policy is not asked and no AX call or observer targets it. The observer is torn down on every app switch, on `stop` and when the policy later says no. `titleChanged` is emitted only when the title actually changes. Every AX call is a synchronous round trip on the main thread. A 0.25 s messaging timeout is set on the app element and on each window element used (it applies per element), the focused window found when subscribing is reused for the title read, and AX calls stop after the first `kAXErrorCannotComplete` until the app sends a notification or is activated again. So an unresponsive app costs roughly one timeout per activation (a few in the worst case), not the system default of about 6 s per call.
+- **`ActivityCoordinator`** (core, `@Observable`) is the integration seam. It stops the source while `CaptureStateStore` is paused (so nothing is read) and restarts it on resume with a fresh snapshot, and drops any sample that arrives while paused or after `stop`. It reacts synchronously through `CaptureStateStore.onChange(_:)`, so a pause takes effect before anything else is read. It re-checks Accessibility trust on every sample and publishes it as `accessibilityTrust` (for a future settings/onboarding UI); without trust samples are app-only and title changes are dropped, even if a source ignored the policy. It never prompts. Trust granted while an app stays frontmost is picked up when the app calls `refreshAccessibilityTrust()` (for example when it becomes active again after System Settings), which restarts the source with a fresh snapshot if active and running; otherwise at the next app switch. It never allows titles for a process without a bundle ID (no exclusion list could match it) or for Unreality's own process. It requires an `ActivitySampleFilter` (`allowsWindowTitle(for:)` before any title is read, `filter(_:)` on every sample): there is deliberately no pass-through filter in the sources, so nothing can wire the coordinator unfiltered; the privacy filter (#20) provides the real one.
+- Browser URLs (#19) and idle time (#18) are separate sources.
 
 ## Repository layout
 | Path | Contents |
@@ -92,7 +105,7 @@ Secrets (the Claude API key) live only in the macOS Keychain (#14). `UnrealityCo
 - The settings UI for entering the key arrives in M5.
 
 ## Data flow
-Platform sources emit samples → privacy filter drops excluded apps/sites (before capture or OCR where possible, always before storage) → dedupe skips unchanged screens → events/OCR text/presence booleans written to SQLite → retention job deletes raw captures after the window → summariser sends text only to the Claude API.
+Platform sources emit samples (`ActivityCoordinator` gates them on pause state and Accessibility trust) → privacy filter drops excluded apps/sites (before capture or OCR where possible, always before storage) → dedupe skips unchanged screens → events/OCR text/presence booleans written to SQLite → retention job deletes raw captures after the window → summariser sends text only to the Claude API.
 
 ## Storage
 SQLite via GRDB.swift 7.11.1 ([ADR 0002](decisions/0002-initial-dependencies.md)), in `Sources/UnrealityCore/Storage` (#16).
