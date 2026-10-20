@@ -1,0 +1,15 @@
+// Signing settings for the Unreality app target, wired in via project.yml.
+//
+// Default: ad-hoc signing, so a clean checkout builds without an Apple
+// Developer team. Ad-hoc signatures change on every build, so macOS drops
+// Screen Recording / Camera / Accessibility grants after each rebuild, and
+// ad-hoc builds do not get the hardened runtime.
+//
+// For stable grants, copy Config/Local.xcconfig.example to
+// Config/Local.xcconfig (gitignored) and set your own team there. Never
+// commit team IDs or identities.
+
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = -
+
+#include? "Local.xcconfig"

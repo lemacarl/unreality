@@ -1,5 +1,5 @@
 import Testing
-@testable import UnrealityCore
+import UnrealityCore
 
 @Suite("AppIdentity")
 struct AppIdentityTests {

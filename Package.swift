@@ -14,9 +14,9 @@ let package = Package(
         .library(name: "UnrealityPlatform", targets: ["UnrealityPlatform"])
     ],
     targets: [
-        // Pure logic and domain types. Must not import AppKit, SwiftUI,
-        // ScreenCaptureKit, AVFoundation, Vision or other OS frameworks
-        // (enforced by the `core_no_os_imports` SwiftLint rule).
+        // Pure logic and domain types. May import only Foundation, Dispatch,
+        // Observation, Synchronization and RegexBuilder (allow-list enforced,
+        // for sources and tests, by the `core_no_os_imports` SwiftLint rule).
         .target(name: "UnrealityCore"),
         // Real implementations of the protocols declared in UnrealityCore.
         .target(

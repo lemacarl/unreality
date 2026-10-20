@@ -36,10 +36,17 @@ line_length:
 
 custom_rules:
   # ADR 0001: UnrealityCore is pure logic; OS integrations live in
-  # UnrealityPlatform behind protocols.
+  # UnrealityPlatform behind protocols. Allow-list, not deny-list: any import
+  # of a module not named here fails, including attributed forms
+  # (@preconcurrency, @_exported, @testable, @_spi(...)) and scoped forms
+  # (import struct X.Y). The atomic group keeps `import struct Foundation.Data`
+  # from backtracking into a false positive. Comments and strings are ignored.
+  # GRDB is added to the list by the storage issue (#16). How to verify the
+  # rule: see CONTRIBUTING.md, "Lint rules".
   core_no_os_imports:
     name: "UnrealityCore must not import OS frameworks"
-    included: "Sources/UnrealityCore/.*\\.swift"
-    regex: "^\\s*(@testable\\s+)?import\\s+(AppKit|SwiftUI|Cocoa|ScreenCaptureKit|AVFoundation|AVKit|Vision|CoreGraphics|CoreImage|CoreMedia|CoreVideo|ApplicationServices|Carbon|IOKit|ServiceManagement|Security|UserNotifications)\\b"
-    message: "UnrealityCore must not import OS frameworks; declare a protocol and implement it in UnrealityPlatform."
+    included: "(Sources/UnrealityCore|Tests/UnrealityCoreTests)/.*\\.swift"
+    regex: "^\\s*(?:@\\w+(?:\\([^)\\n]*\\))?\\s+)*import\\s+(?>(?:(?:typealias|struct|class|enum|protocol|let|var|func)\\s+)?)(?!(?:Foundation|Dispatch|Observation|Synchronization|RegexBuilder|UnrealityCore|Testing)\\b)\\w+"
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "UnrealityCore (and its tests) may only import Foundation, Dispatch, Observation, Synchronization, RegexBuilder (tests also UnrealityCore and Testing); put OS integrations behind a protocol in UnrealityPlatform."
     severity: error

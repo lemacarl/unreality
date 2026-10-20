@@ -15,6 +15,8 @@ ADR 0001 chose native Swift; the guardrails require an ADR for each dependency. 
 
 No other dependencies are approved. Hotkeys use Carbon directly; Sparkle (updates) needs its own ADR in M7. Versions are pinned in the scaffold issue (#10), which also re-checks maintenance health.
 
+_Note (#10):_ XcodeGen and SwiftLint are pinned in CONTRIBUTING.md (Tool versions). The scaffold needs no runtime dependency, so GRDB is not added yet; its version pin and health re-check are deferred to the storage issue (#16).
+
 ## Consequences
 One runtime dependency (GRDB) enters the app; the two tools are build-time only.
 

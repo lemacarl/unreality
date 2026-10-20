@@ -43,13 +43,16 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_CFBundleDisplayName: Unreality
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
-        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        # Only applied when signing with a real identity; ad-hoc Debug
+        # builds do not get the hardened runtime.
         ENABLE_HARDENED_RUNTIME: YES
-        # Ad-hoc signing by default so a clean checkout builds without an
-        # Apple Developer team. CI passes CODE_SIGNING_ALLOWED=NO. For TCC
-        # grants that survive rebuilds, see CONTRIBUTING.md.
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
+    # Signing lives in the xcconfig (not here) so a gitignored
+    # Config/Local.xcconfig can override it; target settings in this file
+    # would take precedence over the xcconfig. CI passes
+    # CODE_SIGNING_ALLOWED=NO. See CONTRIBUTING.md, "Local development".
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
 
 schemes:
   Unreality:
