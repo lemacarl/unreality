@@ -1,5 +1,9 @@
 # SwiftLint configuration. Run `swiftlint --strict` from the repo root
 # (warnings fail). Pinned version: see CONTRIBUTING.md, "Tool versions".
+# SwiftLint refuses to run with a different version; CI checks this value
+# against scripts/ci/tool-versions.env.
+swiftlint_version: 0.65.1
+
 included:
   - Package.swift
   - Sources
@@ -46,9 +50,10 @@ custom_rules:
   # group keeps `import struct Foundation.Data` from backtracking into a
   # false positive. Matches inside comments and strings are ignored.
   # Known residual (contrived): a comment between `import` and the module
-  # name, e.g. `import /* c */ AppKit`, is not caught. CI backstop tracked
-  # in #11. GRDB (ADR 0002, storage, #16) is used only by the core (not
-  # enforced outside it yet; the CI backstop in #11 could); the core's tests
+  # name, e.g. `import /* c */ AppKit`, is not caught here; CI's compiler
+  # backstop (scripts/ci/check-core-imports.py) catches it and reads its
+  # allow-list from this rule's regex, so keep the `(?!(?:A|B|...)\b)` form.
+  # GRDB (ADR 0002, storage, #16) is used only by the core; the core's tests
   # reach storage through UnrealityCore's API.
   # How to verify: CONTRIBUTING.md, "Lint rules".
   core_no_os_imports:

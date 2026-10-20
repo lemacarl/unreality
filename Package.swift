@@ -22,7 +22,7 @@ let package = Package(
         // Dispatch, Observation, Synchronization, RegexBuilder and GRDB
         // (ADR 0002): a regex-based guard
         // (SwiftLint `core_no_os_imports`, `core_tests_no_os_imports` for its
-        // tests); CI backstop tracked in #11.
+        // tests), backed in CI by scripts/ci/check-core-imports.py.
         .target(
             name: "UnrealityCore",
             dependencies: [.product(name: "GRDB", package: "GRDB.swift")]

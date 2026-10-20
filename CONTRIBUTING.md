@@ -17,14 +17,16 @@ Build commands are in the [README](README.md#build-and-run). Layout: `Sources/Un
 - Secrets live in the Keychain only.
 
 ## Lint rules
-Two custom SwiftLint rules in `.swiftlint.yml` keep the core free of OS frameworks. They are a regex-based guard; a CI backstop is tracked in #11.
+Two custom SwiftLint rules in `.swiftlint.yml` keep the core free of OS frameworks. They are a regex-based guard; CI backs them with a compiler check and an escape-hatch check (see [CI](#ci)).
 
 - `core_no_os_imports`: files in `Sources/UnrealityCore` may import only Foundation, Dispatch, Observation, Synchronization, RegexBuilder and GRDB (storage, ADR 0002).
 - `core_tests_no_os_imports`: files in `Tests/UnrealityCoreTests` may import the same modules plus UnrealityCore and Testing.
 
-GRDB is not allowed in `Tests/UnrealityCoreTests`: tests use the core's storage API on in-memory databases. Both are allow-lists. They ignore comments and strings, and catch attributed, access-level, scoped and backticked imports (`@preconcurrency import X`, `internal import X`, `public import X`, `import struct X.Y`, ``import `X` ``) as well as an import after other code on the same line. Known residual (contrived): a comment between `import` and the module name (`import /* c */ AppKit`). New core dependencies must be added to the list in the same PR as their ADR.
+GRDB is not allowed in `Tests/UnrealityCoreTests`: tests use the core's storage API on in-memory databases. Both are allow-lists. They ignore comments and strings, and catch attributed, access-level, scoped and backticked imports (`@preconcurrency import X`, `internal import X`, `public import X`, `import struct X.Y`, ``import `X` ``) as well as an import after other code on the same line. Known residual of the regex (contrived): a comment between `import` and the module name (`import /* c */ AppKit`); the CI compiler check catches it. New core dependencies must be added to the list in the same PR as their ADR.
 
-To check the rules after editing them, add throwaway probe files such as `Sources/UnrealityCore/ZZProbe1.swift` containing `@preconcurrency import AVFoundation`, `ZZProbe2.swift` containing `internal import AVFoundation`, `ZZProbe3.swift` containing `import struct Foundation.Data` and `ZZProbe4.swift` containing `import GRDB` (and the same in `Tests/UnrealityCoreTests`). Run `swiftlint lint --strict` on each, confirm the first two are flagged by the rule for that folder, the third is clean, and `import GRDB` is clean in the core but flagged in its tests, then delete the probes.
+Do not switch the rules off. CI fails on a nested `.swiftlint.yml`/`.swiftlint.yaml` anywhere in the repo, on a `swiftlint:disable` (including `:next`, `:this`, `:previous`) naming either rule in any `*.swift` file under `Sources`, `Tests` or `App`, and on `swiftlint:disable all` or `custom_rules` in the core or its tests.
+
+To check the rules after editing them, run `scripts/ci/selftest.sh`. It copies the repo to a temporary folder, injects probe files (for example `@preconcurrency import AVFoundation`, `internal import AVFoundation`, `import struct Foundation.Data` and `import GRDB` in `Sources/UnrealityCore` and `Tests/UnrealityCoreTests`) and confirms each guard flags the violations and passes the allowed forms (`import GRDB` is clean in the core but flagged in its tests).
 
 ## Manual checks
 Some behaviour cannot run in CI. Run these locally when a PR carries the `needs-manual-test` label for them, and say in the PR that you did.
@@ -41,7 +43,25 @@ Pinned build tools (ADR 0002). Maintenance health re-checked 2026-10-20.
 | SwiftLint | 0.65.1 | MIT | Latest release 2026-08-21; commits within the last week; not archived |
 | GRDB.swift (runtime) | 7.11.1 (`exact:` in `Package.swift`, locked in `Package.resolved`) | MIT | Re-checked 2026-10-20 (#16): latest release v7.11.1 (2026-06-18); last commit 2026-08-08, last push 2026-09-29; 14 open issues; not archived |
 
-`project.yml` enforces `minimumXcodeGenVersion`. GRDB is the only runtime dependency; bump it deliberately in its own PR and re-check health.
+CI reads the pins (and the release-asset SHA-256 digests) from `scripts/ci/tool-versions.env` and fails if this table, `swiftlint_version` in `.swiftlint.yml` (SwiftLint also refuses to run with a different version) or the installed tools disagree with it. `project.yml` enforces `minimumXcodeGenVersion`, which must not exceed the pin. To bump a tool, change all of these in one PR. GRDB is the only runtime dependency; bump it deliberately in its own PR and re-check health (CI checks that the table, `Package.swift` and `Package.resolved` agree).
+
+## CI
+`.github/workflows/ci.yml` runs on every pull request, on pushes to `main` and on manual dispatch. It has one job whose status check is named **`ci`**: make `ci` the required status check in the branch protection rule for `main`. It uses no secrets, only read access to the repository contents, and builds unsigned (`CODE_SIGNING_ALLOWED=NO`); signing and notarisation are out of scope.
+
+Runner: the `macos-26` image (arm64) with Xcode selected explicitly from the Tool versions table (`/Applications/Xcode_<version>.app`). XcodeGen and SwiftLint are downloaded from their GitHub releases at the pinned versions and checked against SHA-256 digests. Third-party actions are pinned to commit SHAs. SwiftPM dependency checkouts are cached, keyed on the Xcode version and `Package.swift`/`Package.resolved`.
+
+Steps, in order; any failure fails `ci`:
+
+1. Tool versions: `scripts/ci/check-tool-versions.sh` (see Tool versions).
+2. SwiftLint escape hatches: `scripts/ci/check-lint-escape-hatches.sh` (see Lint rules).
+3. Bundle ID: `scripts/ci/check-bundle-id.sh` checks that `AppIdentity.bundleIdentifier` matches `PRODUCT_BUNDLE_IDENTIFIER` in `project.yml` (and, after the app build, the built `Info.plist`).
+4. `swiftlint lint --strict`.
+5. `swift build` and `swift test`.
+6. Core import backstop: `scripts/ci/check-core-imports.py` asks the compiler (`-scan-dependencies` for direct imports, `-emit-loaded-module-trace` for loaded modules) what `UnrealityCore` imports in debug and release conditions, and fails on anything a probe importing only the allow-list (read from `core_no_os_imports`) does not. Unlike the regex it sees through comments and `#if`, and it catches modules such as IOKit that Foundation already loads transitively, or raw `SQLite3`/`GRDBSQLite` next to GRDB. Package modules on the allow-list (GRDB) are resolved from SwiftPM's build output, so it runs after `swift build`. Its compiler flags mirror SwiftPM's by hand: if `Package.swift` gives `UnrealityCore` `swiftSettings`, mirror them in the script.
+7. Guard self-test: `scripts/ci/selftest.sh` proves the guards still catch injected violations (also after `swift build`, for GRDB).
+8. `xcodegen generate` and `xcodebuild build` of the `Unreality` scheme.
+
+Every step is a plain shell command; run the scripts locally the same way before pushing (with the pinned tools on `PATH`).
 
 ## Agents and models
 | Role | Model | Effort | Used for |
