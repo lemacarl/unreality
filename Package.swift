@@ -15,8 +15,9 @@ let package = Package(
     ],
     targets: [
         // Pure logic and domain types. May import only Foundation, Dispatch,
-        // Observation, Synchronization and RegexBuilder (allow-list enforced,
-        // for sources and tests, by the `core_no_os_imports` SwiftLint rule).
+        // Observation, Synchronization and RegexBuilder: a regex-based guard
+        // (SwiftLint `core_no_os_imports`, `core_tests_no_os_imports` for its
+        // tests); CI backstop tracked in #11.
         .target(name: "UnrealityCore"),
         // Real implementations of the protocols declared in UnrealityCore.
         .target(
