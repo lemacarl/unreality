@@ -5,7 +5,8 @@ import UnrealityPlatform
 
 /// Popover shown from the menu-bar status item.
 struct StatusPopover: View {
-    let store: CaptureStateStore
+    let model: AppModel
+    private var store: CaptureStateStore { model.captureState }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -36,6 +37,10 @@ struct StatusPopover: View {
             }
             .controlSize(.large)
 
+            Text(hotkeyCaption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Divider()
 
             HStack {
@@ -51,6 +56,21 @@ struct StatusPopover: View {
         }
         .padding(16)
         .frame(width: 280)
+    }
+
+    private var hotkeyCaption: String {
+        let shortcut = model.pauseHotkeyController.hotkey.displayString
+        return model.isPauseHotkeyUnavailable
+            ? "Shortcut \(shortcut) could not be registered."
+            : "Shortcut: \(shortcut)"
+    }
+}
+
+extension Hotkey {
+    /// Menu-style shortcut text, e.g. "⌃⌥⌘P".
+    var displayString: String {
+        let symbols: [(Modifiers, String)] = [(.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")]
+        return symbols.filter { modifiers.contains($0.0) }.map(\.1).joined() + keyLabel
     }
 }
 

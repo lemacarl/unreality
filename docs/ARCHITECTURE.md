@@ -1,6 +1,6 @@
 # Architecture
 
-Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14) and the SQLite storage layer (#16); no capture yet.
+Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16) and a global pause hotkey (#15); no capture yet.
 
 ```mermaid
 flowchart LR
@@ -25,8 +25,20 @@ flowchart LR
 
 ## Menu bar and capture state
 - `CaptureStateStore` (UnrealityCore) is the single source of truth for whether capture is `running` or `paused`. It is `@MainActor` and `@Observable` (Observation framework), exposes `state`, `isPaused`, `pause()`, `resume()` and `toggle()`, ignores same-state writes, and starts in `running`. It holds state only; it is not persisted across launches. The global pause hotkey (#15) calls `toggle()`, and the capture pipeline (M3) will observe it.
-- The app owns one store (`@State` in `UnrealityApp`) and shows it through a SwiftUI `MenuBarExtra` with `.window` style (a popover-like panel). The status item is a template SF Symbol (`eye` running, `eye.slash` paused) so macOS tints it for light and dark menu bars. The popover shows the state, a Pause/Resume button and Quit (Cmd-Q). Display strings and symbol names live in the app (`StatusPopover.swift`), not the core.
+- The app owns one store via `AppModel` (App/Sources/AppModel.swift), which `AppDelegate` (wired with `@NSApplicationDelegateAdaptor`) creates and keeps for the app's lifetime, so the global hotkey handler and SwiftUI share it. `UnrealityApp` shows it through a SwiftUI `MenuBarExtra` with `.window` style (a popover-like panel). The status item is a template SF Symbol (`eye` running, `eye.slash` paused) so macOS tints it for light and dark menu bars. The popover shows the state, a Pause/Resume button and Quit (Cmd-Q). Display strings and symbol names live in the app (`StatusPopover.swift`), not the core.
+- The popover also shows the pause shortcut, or that it could not be registered.
 - `MenuBarExtra` is sufficient for now; switch to `NSStatusItem` + `NSPopover` (ADR 0001) only if it proves limiting.
+
+## Time and hotkeys
+Protocols in UnrealityCore, real implementations in UnrealityPlatform, fakes in the core so tests and later features use them:
+
+| Protocol (core) | Real (platform) | Fake (core) |
+|---|---|---|
+| `WallClock` (named to avoid `Swift.Clock`): `now()` | `SystemClock` | `FakeTime` |
+| `Scheduler`: `schedule(after:repeating:_:)` returning a cancellable `ScheduledWork` | `DispatchScheduler` (`DispatchSourceTimer` on a given queue) | `FakeTime`: time moves only on `advance(by:)`, which runs due work in order |
+| `HotkeyRegistrar` (`@MainActor`) | `CarbonHotkeyRegistrar` (`RegisterEventHotKey`; no Accessibility or Input Monitoring permission, sees only its own combination) | `FakeHotkeyRegistrar` with `press(_:)` |
+
+`PauseHotkeyController` (core) binds a `Hotkey` to `CaptureStateStore.toggle()`. The default is `Hotkey.defaultPause`, Control-Option-Command-P (key code 35: a physical key position, labelled P on QWERTY layouts; other layouts may show a different letter there, and deriving the label from the layout is for the settings UI); override it in code via `AppModel(pauseHotkey:)` until a settings UI exists. If registration fails the app logs the OS status and the popover says the shortcut could not be registered; it does not guess why. Only refusals the OS reports are detectable (for example `eventHotKeyExistsErr` for a combination already registered in this process). A combination held by another app, or a system shortcut, is not detected: `RegisterEventHotKey` returns `noErr` and presses may never arrive. So the menu-bar icon and popover, not the shortcut, are the source of truth for pause state. `CarbonHotkeyRegistrar` and `PauseHotkeyController` release their registrations in `deinit`, so they must be released on the main thread (their main-actor owner, `AppModel`, ensures this). Launch at login (`LoginItemService` via `SMAppService`) is tracked in #56.
 
 ## Repository layout
 | Path | Contents |

@@ -17,3 +17,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/).
 - GitHub Actions CI (`ci` check) on every PR and on `main`: pinned `macos-26` runner and Xcode 26.1.1, checksum-verified pinned XcodeGen/SwiftLint, SwiftLint `--strict`, `swift build`/`swift test`, XcodeGen + `xcodebuild` app build, SwiftPM cache; no secrets (#11).
 - CI guards in `scripts/ci/`: compiler-based backstop for the `UnrealityCore` import allow-list, SwiftLint escape-hatch check, bundle-ID drift check, tool-version drift check (including the GRDB pin in `Package.swift`, `Package.resolved` and CONTRIBUTING), and a self-test proving each guard catches violations (#11).
 - `swiftlint_version` pin in `.swiftlint.yml` (#11).
+- `WallClock` and `Scheduler` protocols with `SystemClock`/`DispatchScheduler` and a `FakeTime` test double (#15).
+- Global pause hotkey, Control-Option-Command-P by default, toggling `CaptureStateStore` via `HotkeyRegistrar` (Carbon `RegisterEventHotKey`) and `PauseHotkeyController`, with `FakeHotkeyRegistrar` (#15).
+
+### Changed
+- `CaptureStateStore` is now owned by an `AppModel` held by the app delegate instead of the SwiftUI `App` struct (#15).
