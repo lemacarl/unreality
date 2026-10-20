@@ -1,0 +1,62 @@
+# XcodeGen spec for the Unreality app shell. Generate the project with
+# `xcodegen generate`; never hand-edit Unreality.xcodeproj (it is gitignored).
+name: Unreality
+
+options:
+  bundleIdPrefix: com.lemacarl
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.46.0"
+
+packages:
+  Unreality:
+    path: .
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MARKETING_VERSION: "0.0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEAD_CODE_STRIPPING: YES
+
+targets:
+  Unreality:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/Sources
+    dependencies:
+      - package: Unreality
+        product: UnrealityCore
+      - package: Unreality
+        product: UnrealityPlatform
+    settings:
+      base:
+        # Must match AppIdentity.bundleIdentifier. Keep stable: macOS ties
+        # Screen Recording / Camera / Accessibility grants to it.
+        PRODUCT_BUNDLE_IDENTIFIER: com.lemacarl.unreality
+        PRODUCT_NAME: Unreality
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Unreality
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        ENABLE_HARDENED_RUNTIME: YES
+        # Ad-hoc signing by default so a clean checkout builds without an
+        # Apple Developer team. CI passes CODE_SIGNING_ALLOWED=NO. For TCC
+        # grants that survive rebuilds, see CONTRIBUTING.md.
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+
+schemes:
+  Unreality:
+    build:
+      targets:
+        Unreality: all
+    run:
+      config: Debug
+    archive:
+      config: Release

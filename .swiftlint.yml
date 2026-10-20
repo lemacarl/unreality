@@ -1,0 +1,45 @@
+# SwiftLint configuration. Run `swiftlint --strict` from the repo root
+# (warnings fail). Pinned version: see CONTRIBUTING.md, "Tool versions".
+included:
+  - Package.swift
+  - Sources
+  - Tests
+  - App
+
+excluded:
+  - .build
+  - DerivedData
+  - Unreality.xcodeproj
+
+opt_in_rules:
+  - closure_spacing
+  - empty_count
+  - explicit_init
+  - fatal_error_message
+  - first_where
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - modifier_order
+  - overridden_super_call
+  - redundant_nil_coalescing
+  - sorted_imports
+  - vertical_whitespace_closing_braces
+
+analyzer_rules:
+  - unused_declaration
+  - unused_import
+
+line_length:
+  warning: 120
+  error: 160
+  ignores_comments: true
+
+custom_rules:
+  # ADR 0001: UnrealityCore is pure logic; OS integrations live in
+  # UnrealityPlatform behind protocols.
+  core_no_os_imports:
+    name: "UnrealityCore must not import OS frameworks"
+    included: "Sources/UnrealityCore/.*\\.swift"
+    regex: "^\\s*(@testable\\s+)?import\\s+(AppKit|SwiftUI|Cocoa|ScreenCaptureKit|AVFoundation|AVKit|Vision|CoreGraphics|CoreImage|CoreMedia|CoreVideo|ApplicationServices|Carbon|IOKit|ServiceManagement|Security|UserNotifications)\\b"
+    message: "UnrealityCore must not import OS frameworks; declare a protocol and implement it in UnrealityPlatform."
+    severity: error
