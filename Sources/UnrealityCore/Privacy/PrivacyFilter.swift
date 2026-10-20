@@ -132,53 +132,51 @@ public struct PrivacyFilter: Sendable, Equatable {
 /// Window titles and URLs never appear in `print`, string interpolation,
 /// `dump` or debugger summaries of activity types, so passing one to a
 /// logger by mistake does not leak them.
-enum ActivityRedaction {
-    static func describe(
-        _ type: String, id: Int64? = nil, kind: ActivityEventKind, appBundleID: String?,
-        windowTitle: String?, url: String?, startedAt: Date, endedAt: Date, source: String
-    ) -> String {
+protocol RedactedActivityDescription {
+    var kind: ActivityEventKind { get }
+    var appBundleID: String? { get }
+    var windowTitle: String? { get }
+    var url: String? { get }
+    var startedAt: Date { get }
+    var endedAt: Date { get }
+    var source: String { get }
+}
+
+extension RedactedActivityDescription {
+    /// `Type(id: …, kind: …, app: …, title: <redacted>, url: <redacted>, from: …, to: …, source: …)`;
+    /// a title or URL that is absent shows as `nil`.
+    func redactedDescription(id: Int64? = nil) -> String {
+        func redacted(_ value: String?) -> String { value == nil ? "nil" : "<redacted>" }
         var fields: [String] = []
         if let id { fields.append("id: \(id)") }
         fields.append("kind: \(kind.rawValue)")
         fields.append("app: \(appBundleID ?? "nil")")
-        fields.append("title: \(windowTitle == nil ? "nil" : "<redacted>")")
-        fields.append("url: \(url == nil ? "nil" : "<redacted>")")
+        fields.append("title: \(redacted(windowTitle))")
+        fields.append("url: \(redacted(url))")
         fields.append("from: \(startedAt.timeIntervalSince1970)")
         fields.append("to: \(endedAt.timeIntervalSince1970)")
         fields.append("source: \(source)")
-        return "\(type)(\(fields.joined(separator: ", ")))"
+        return "\(Self.self)(\(fields.joined(separator: ", ")))"
     }
 }
 
-extension ActivitySample: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-    public var description: String {
-        ActivityRedaction.describe(
-            "ActivitySample", kind: kind, appBundleID: appBundleID, windowTitle: windowTitle,
-            url: url, startedAt: startedAt, endedAt: endedAt, source: source
-        )
-    }
+extension ActivitySample: RedactedActivityDescription, CustomStringConvertible, CustomDebugStringConvertible,
+    CustomReflectable {
+    public var description: String { redactedDescription() }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [], displayStyle: .struct) }
 }
 
-extension FilteredEvent: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-    public var description: String {
-        ActivityRedaction.describe(
-            "FilteredEvent", kind: kind, appBundleID: appBundleID, windowTitle: windowTitle,
-            url: url, startedAt: startedAt, endedAt: endedAt, source: source
-        )
-    }
+extension FilteredEvent: RedactedActivityDescription, CustomStringConvertible, CustomDebugStringConvertible,
+    CustomReflectable {
+    public var description: String { redactedDescription() }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [], displayStyle: .struct) }
 }
 
-extension ActivityEvent: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-    public var description: String {
-        ActivityRedaction.describe(
-            "ActivityEvent", id: id, kind: kind, appBundleID: appBundleID, windowTitle: windowTitle,
-            url: url, startedAt: startedAt, endedAt: endedAt, source: source
-        )
-    }
+extension ActivityEvent: RedactedActivityDescription, CustomStringConvertible, CustomDebugStringConvertible,
+    CustomReflectable {
+    public var description: String { redactedDescription(id: id) }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [], displayStyle: .struct) }
 }
