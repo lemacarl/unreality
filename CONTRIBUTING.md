@@ -26,6 +26,11 @@ Both are allow-lists. They ignore comments and strings, and catch attributed, ac
 
 To check the rules after editing them, add throwaway probe files such as `Sources/UnrealityCore/ZZProbe1.swift` containing `@preconcurrency import AVFoundation`, `ZZProbe2.swift` containing `internal import AVFoundation` and `ZZProbe3.swift` containing `import struct Foundation.Data` (and the same in `Tests/UnrealityCoreTests`). Run `swiftlint lint --strict` on each, confirm the first two are flagged by the rule for that folder and the third is clean, then delete the probes.
 
+## Manual checks
+Some behaviour cannot run in CI. Run these locally when a PR carries the `needs-manual-test` label for them, and say in the PR that you did.
+
+- **Keychain secret store (#14).** `UNREALITY_KEYCHAIN_TESTS=1 swift test --filter KeychainSecretStoreIntegrationTests` runs the `SecretStore` contract against your login keychain. Without the variable the suite is skipped (the default, and in CI). It uses a throwaway service `com.lemacarl.unreality.tests.<UUID>` and deletes every item it creates, so it never reads or changes the app's real items. Expect 3 passing tests and no keychain prompt. Afterwards, `security find-generic-password -s com.lemacarl.unreality.tests` should report that no item was found (or open Keychain Access and search for `unreality.tests`). Never paste real secrets into test output, issues or PRs.
+
 ## Tool versions
 Pinned build tools (ADR 0002). Maintenance health re-checked 2026-10-20.
 

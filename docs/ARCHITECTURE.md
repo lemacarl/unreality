@@ -1,11 +1,11 @@
 # Architecture
 
-Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12); no capture yet.
+Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12) and the Keychain secret store (#14); no capture yet.
 
 ```mermaid
 flowchart LR
   subgraph Platform[UnrealityPlatform - real OS integrations]
-    A[ActivitySource] --- S[ScreenCapturer + OCRService] --- F[FaceDetector] --- K[KeychainStore] --- C[AIClient impl]
+    A[ActivitySource] --- S[ScreenCapturer + OCRService] --- F[FaceDetector] --- K[KeychainSecretStore] --- C[AIClient impl]
   end
   subgraph Core[UnrealityCore - pure logic, fakes in tests]
     P[Privacy filter / blocklist] --> D[Dedupe + scheduler]
@@ -44,6 +44,15 @@ flowchart LR
 Considered and not enabled: Swift 6.2's default MainActor isolation (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` / `.defaultIsolation(MainActor.self)`) and the "approachable concurrency" upcoming features. Most of the code is background capture, OCR and storage, so implicit MainActor isolation would push work onto the UI thread by default, and the packages and the app shell should share one set of rules. UI types are annotated `@MainActor` explicitly. Revisit for the App target if the annotation noise grows.
 
 Revisit the mode if a required Apple framework is unusable under strict concurrency; in UnrealityPlatform prefer a local `@preconcurrency import` over dropping the mode (in UnrealityCore the import allow-list still applies).
+
+## Secrets
+Secrets (the Claude API key) live only in the macOS Keychain (#14). `UnrealityCore` declares the `SecretStore` protocol (ADR 0001 calls it `KeychainStore`), the `SecretKey` / `SecretValue` types, `SecretStoreError`, and the `InMemorySecretStore` fake used by tests and previews. `UnrealityPlatform` has `KeychainSecretStore`, built on the Security framework.
+
+- Each secret is a generic-password item: service = the store's namespace, account = `SecretKey.rawValue` (the API key is `claude-api-key`). The app uses the default service, the bundle ID `com.lemacarl.unreality`; tests inject a unique service so they never touch real items.
+- Items live in the login (file-based) keychain, not the data-protection keychain, which would need a keychain-access-groups entitlement and a real signing identity. Items are not synchronised to iCloud. macOS may ask the user to allow access when the app's signing identity changes (for example between ad-hoc builds).
+- No logging of secret values. `SecretValue` redacts itself in `description`, `debugDescription`, string interpolation and `dump`; the plaintext is only available through `reveal()` at the point of use. `SecretStoreError` carries only the key name and a status code.
+- Contract (get missing = `nil`, set inserts or replaces, remove is idempotent, keys independent) is unit-tested against the fake; the same checks run against the real Keychain only on demand (`UNREALITY_KEYCHAIN_TESTS=1`, see CONTRIBUTING.md, "Manual checks").
+- The settings UI for entering the key arrives in M5.
 
 ## Data flow
 Platform sources emit samples → privacy filter drops excluded apps/sites (before capture or OCR where possible, always before storage) → dedupe skips unchanged screens → events/OCR text/presence booleans written to SQLite → retention job deletes raw captures after the window → summariser sends text only to the Claude API.

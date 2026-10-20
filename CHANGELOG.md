@@ -11,3 +11,4 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/).
 - README build/run instructions and required permissions; pinned tool versions in CONTRIBUTING (#10).
 - `CaptureStateStore` in `UnrealityCore`: observable running/paused capture state with `pause()`, `resume()` and `toggle()`, plus unit tests (#12).
 - Menu-bar status item whose icon shows capture state (`eye` running, `eye.slash` paused) and a popover with the state, a Pause/Resume control and Quit (#12).
+- `SecretStore` protocol with redacting `SecretValue`, `SecretKey` and `SecretStoreError` types and an `InMemorySecretStore` fake in `UnrealityCore`; `KeychainSecretStore` (Security framework, injectable service namespace) in `UnrealityPlatform`. Contract unit tests run against the fake; an opt-in integration test (`UNREALITY_KEYCHAIN_TESTS=1`) runs against the real Keychain (#14).
