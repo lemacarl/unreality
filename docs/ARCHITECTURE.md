@@ -1,6 +1,6 @@
 # Architecture
 
-Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold only (SwiftPM packages and an empty menu-bar app shell); no features yet.
+Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12); no capture yet.
 
 ```mermaid
 flowchart LR
@@ -22,6 +22,11 @@ flowchart LR
 - **UnrealityCore** — domain types, scheduler, dedupe, privacy filtering, retention, summarisation orchestration, storage schema. No OS imports.
 - **UnrealityPlatform** — real implementations of every protocol.
 - **App** — SwiftUI/AppKit shell, generated via XcodeGen.
+
+## Menu bar and capture state
+- `CaptureStateStore` (UnrealityCore) is the single source of truth for whether capture is `running` or `paused`. It is `@MainActor` and `@Observable` (Observation framework), exposes `state`, `isPaused`, `pause()`, `resume()` and `toggle()`, ignores same-state writes, and starts in `running`. It holds state only; it is not persisted across launches. The global pause hotkey (#15) calls `toggle()`, and the capture pipeline (M3) will observe it.
+- The app owns one store (`@State` in `UnrealityApp`) and shows it through a SwiftUI `MenuBarExtra` with `.window` style (a popover-like panel). The status item is a template SF Symbol (`eye` running, `eye.slash` paused) so macOS tints it for light and dark menu bars. The popover shows the state, a Pause/Resume button and Quit (Cmd-Q). Display strings and symbol names live in the app (`StatusPopover.swift`), not the core.
+- `MenuBarExtra` is sufficient for now; switch to `NSStatusItem` + `NSPopover` (ADR 0001) only if it proves limiting.
 
 ## Repository layout
 | Path | Contents |
