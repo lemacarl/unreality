@@ -80,20 +80,29 @@ extension SettingKey where Value == Int {
 /// User settings that exist so far. Everything here is non-secret,
 /// non-captured configuration. Values are placeholders until the features
 /// that read them land; see docs/ARCHITECTURE.md, "Settings".
-public enum Settings {
+public enum AppSettings {
     /// Minutes without input after which the user counts as idle. Read by
     /// idle detection (#18); not used yet.
-    public static let idleThresholdMinutes = SettingKey<Int>("idleThresholdMinutes", default: 5, range: 1...60)
+    public static let idleThresholdMinutes = SettingKey<Int>(
+        "idleThresholdMinutes", default: 5, range: idleThresholdRange
+    )
+    public static let idleThresholdRange = 1...60
 
     /// Hours raw screen captures are kept before deletion. Read by the raw
     /// retention job (#27), which sets the final default (expected <= 24 h);
     /// not enforced yet.
-    public static let rawCaptureRetentionHours = SettingKey<Int>("rawCaptureRetentionHours", default: 24, range: 1...24)
+    public static let rawCaptureRetentionHours = SettingKey<Int>(
+        "rawCaptureRetentionHours", default: 24, range: rawCaptureRetentionRange
+    )
+    public static let rawCaptureRetentionRange = 1...24
 
     /// Days thumbnails, OCR text and activity events are kept. Read by the
     /// capture store and retention (#26), which sets the final default; not
     /// enforced yet.
-    public static let contentRetentionDays = SettingKey<Int>("contentRetentionDays", default: 30, range: 1...365)
+    public static let contentRetentionDays = SettingKey<Int>(
+        "contentRetentionDays", default: 30, range: contentRetentionRange
+    )
+    public static let contentRetentionRange = 1...365
 
     /// Names of every setting, for stores that must tell settings apart from
     /// other data in the same namespace.

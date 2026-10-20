@@ -20,13 +20,13 @@ final class DefaultsSuite {
 @Suite("UserDefaultsSettingsStore")
 struct UserDefaultsSettingsStoreTests {
     let suite = DefaultsSuite()
-    private let threshold = Settings.idleThresholdMinutes
+    private let threshold = AppSettings.idleThresholdMinutes
 
     @Test("unset key reads as its default")
     func defaults() throws {
         let store = try UserDefaultsSettingsStore(defaults: suite.makeDefaults())
         #expect(store.value(for: threshold) == threshold.defaultValue)
-        #expect(store.value(for: Settings.contentRetentionDays) == 30)
+        #expect(store.value(for: AppSettings.contentRetentionDays) == 30)
     }
 
     @Test("values persist across store instances (launches)")
@@ -42,13 +42,13 @@ struct UserDefaultsSettingsStoreTests {
     @Test("writes are clamped; remove restores the default and is idempotent")
     func clampAndRemove() throws {
         let store = try UserDefaultsSettingsStore(defaults: suite.makeDefaults())
-        store.setValue(500, for: Settings.rawCaptureRetentionHours)
-        #expect(store.value(for: Settings.rawCaptureRetentionHours) == 24)
+        store.setValue(500, for: AppSettings.rawCaptureRetentionHours)
+        #expect(store.value(for: AppSettings.rawCaptureRetentionHours) == 24)
         store.setValue(3, for: threshold)
         store.removeValue(for: threshold)
         store.removeValue(for: threshold)
         #expect(store.value(for: threshold) == 5)
-        #expect(store.value(for: Settings.rawCaptureRetentionHours) == 24)
+        #expect(store.value(for: AppSettings.rawCaptureRetentionHours) == 24)
     }
 
     @Test("stored values of the wrong type read as the default")
@@ -66,10 +66,10 @@ struct UserDefaultsSettingsStoreTests {
         let defaults = try suite.makeDefaults()
         let store = UserDefaultsSettingsStore(defaults: defaults)
         store.setValue(8, for: threshold)
-        store.setValue(12, for: Settings.rawCaptureRetentionHours)
-        store.setValue(60, for: Settings.contentRetentionDays)
+        store.setValue(12, for: AppSettings.rawCaptureRetentionHours)
+        store.setValue(60, for: AppSettings.contentRetentionDays)
         let domain = try #require(defaults.persistentDomain(forName: suite.name))
-        #expect(Set(domain.keys) == Settings.allNames)
+        #expect(Set(domain.keys) == AppSettings.allNames)
         #expect(domain.values.allSatisfy { $0 is NSNumber })
     }
 }

@@ -6,7 +6,7 @@ import UnrealityCore
 // behaviour is checked against UserDefaults by UserDefaultsSettingsStoreTests
 // in UnrealityPlatformTests.
 
-private let threshold = Settings.idleThresholdMinutes
+private let threshold = AppSettings.idleThresholdMinutes
 
 @Suite("SettingsStore contract (InMemorySettingsStore)")
 struct SettingsStoreContractTests {
@@ -14,9 +14,9 @@ struct SettingsStoreContractTests {
 
     @Test("unset key reads as its default")
     func defaults() {
-        #expect(store.value(for: Settings.idleThresholdMinutes) == 5)
-        #expect(store.value(for: Settings.rawCaptureRetentionHours) == 24)
-        #expect(store.value(for: Settings.contentRetentionDays) == 30)
+        #expect(store.value(for: AppSettings.idleThresholdMinutes) == 5)
+        #expect(store.value(for: AppSettings.rawCaptureRetentionHours) == 24)
+        #expect(store.value(for: AppSettings.contentRetentionDays) == 30)
     }
 
     @Test("set then get round-trips the value")
@@ -38,8 +38,8 @@ struct SettingsStoreContractTests {
         #expect(store.value(for: threshold) == 1)
         store.setValue(10_000, for: threshold)
         #expect(store.value(for: threshold) == 60)
-        store.setValue(-3, for: Settings.rawCaptureRetentionHours)
-        #expect(store.value(for: Settings.rawCaptureRetentionHours) == 1)
+        store.setValue(-3, for: AppSettings.rawCaptureRetentionHours)
+        #expect(store.value(for: AppSettings.rawCaptureRetentionHours) == 1)
     }
 
     @Test("remove restores the default and is idempotent")
@@ -53,10 +53,10 @@ struct SettingsStoreContractTests {
     @Test("keys are independent")
     func independentKeys() {
         store.setValue(12, for: threshold)
-        store.setValue(3, for: Settings.contentRetentionDays)
+        store.setValue(3, for: AppSettings.contentRetentionDays)
         store.removeValue(for: threshold)
         #expect(store.value(for: threshold) == 5)
-        #expect(store.value(for: Settings.contentRetentionDays) == 3)
+        #expect(store.value(for: AppSettings.contentRetentionDays) == 3)
     }
 
     @Test("stored values of the wrong type read as the default")
@@ -78,9 +78,11 @@ struct SettingsStoreContractTests {
 struct SettingKeyTests {
     @Test("defaults lie in range and names are unique")
     func registry() {
-        let keys = [Settings.idleThresholdMinutes, Settings.rawCaptureRetentionHours, Settings.contentRetentionDays]
-        #expect(Set(keys.map(\.name)) == Settings.allNames)
-        #expect(Settings.allNames.count == keys.count)
+        let keys = [
+            AppSettings.idleThresholdMinutes, AppSettings.rawCaptureRetentionHours, AppSettings.contentRetentionDays
+        ]
+        #expect(Set(keys.map(\.name)) == AppSettings.allNames)
+        #expect(AppSettings.allNames.count == keys.count)
         for key in keys {
             #expect(key.sanitize(key.defaultValue) == key.defaultValue, "\(key.name)")
         }
@@ -115,7 +117,7 @@ struct SettingsModelTests {
         store.setValue(9, for: threshold)
         let model = SettingsModel(store: store)
         #expect(model[threshold] == 9)
-        #expect(model[Settings.contentRetentionDays] == 30)
+        #expect(model[AppSettings.contentRetentionDays] == 30)
     }
 
     @Test("writes go through to the store, sanitised")
@@ -130,8 +132,8 @@ struct SettingsModelTests {
 
     @Test("a new model over the same store sees earlier writes")
     func persistsAcrossModels() {
-        SettingsModel(store: store)[Settings.contentRetentionDays] = 90
-        #expect(SettingsModel(store: store)[Settings.contentRetentionDays] == 90)
+        SettingsModel(store: store)[AppSettings.contentRetentionDays] = 90
+        #expect(SettingsModel(store: store)[AppSettings.contentRetentionDays] == 90)
     }
 
     @Test("reset restores the default")
