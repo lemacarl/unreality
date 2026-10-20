@@ -12,6 +12,10 @@ struct DatabaseManagerTests {
             .appending(path: "unreality-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
     }
 
+    private func filtered(_ sample: ActivitySample) throws -> FilteredEvent {
+        try #require(PrivacyFilter(blocklist: .empty).filter(sample))
+    }
+
     private func mode(_ path: String) throws -> Int? {
         try files.attributesOfItem(atPath: path)[.posixPermissions] as? Int
     }
@@ -27,7 +31,7 @@ struct DatabaseManagerTests {
         let directory = temporaryDirectory()
         defer { try? files.removeItem(at: directory) }
 
-        let event = ActivityEvent(kind: .idle, startedAt: start, endedAt: start + 60, source: "test")
+        let event = try filtered(ActivitySample(kind: .idle, startedAt: start, endedAt: start + 60, source: "test"))
         do {
             let manager = try DatabaseManager.open(in: directory)
             try manager.activityRepository().insert(event)
@@ -54,7 +58,7 @@ struct DatabaseManagerTests {
 
         let manager = try DatabaseManager.open(in: directory)
         try manager.activityRepository()
-            .insert(ActivityEvent(kind: .idle, startedAt: start, endedAt: start + 1, source: "test"))
+            .insert(filtered(ActivitySample(kind: .idle, startedAt: start, endedAt: start + 1, source: "test")))
 
         #expect(try mode(directory.path(percentEncoded: false)) == 0o700)
         let path = directory.appending(path: DatabaseManager.fileName).path(percentEncoded: false)
@@ -79,10 +83,10 @@ struct DatabaseManagerTests {
 
         let session = try repository.startSession(at: start)
         try repository.endSession(id: try #require(session.id), at: start + 10)
-        try repository.insert(ActivityEvent(
+        try repository.insert(filtered(ActivitySample(
             kind: .app, appBundleID: "com.example.editor", windowTitle: sentinel,
             startedAt: start, endedAt: start + 10, source: "test", sessionID: session.id
-        ))
+        )))
         #expect(try onDisk(), "control: the sentinel is written to disk before the delete")
 
         #expect(try repository.deleteEvents(endedBefore: start + 60) == 1)

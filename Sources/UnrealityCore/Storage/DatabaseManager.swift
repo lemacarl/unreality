@@ -67,6 +67,10 @@ public final class DatabaseManager: Sendable {
     private static func configuration() -> Configuration {
         var config = Configuration()
         config.label = AppIdentity.displayName
+        // Keep statement arguments (window titles, URLs) out of GRDB error
+        // messages and trace descriptions, which may end up in logs. This is
+        // GRDB's default; it is set explicitly so it is never turned on.
+        config.publicStatementArguments = false
         config.prepareDatabase { database in
             // Overwrite deleted content (retention, user deletes) with zeros.
             try database.execute(sql: "PRAGMA secure_delete = ON")

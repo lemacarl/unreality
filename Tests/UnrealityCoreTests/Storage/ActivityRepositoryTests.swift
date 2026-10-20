@@ -14,8 +14,9 @@ struct ActivityRepositoryTests {
     }
 
     private func event(_ kind: ActivityEventKind = .app, from start: TimeInterval, to end: TimeInterval,
-                       sessionID: Int64? = nil) -> ActivityEvent {
-        ActivityEvent(
+                       sessionID: Int64? = nil) throws -> FilteredEvent {
+        // Storage takes only filtered events; the blocklist is irrelevant here.
+        try #require(PrivacyFilter(blocklist: .empty).filter(ActivitySample(
             kind: kind,
             appBundleID: kind == .idle ? nil : "com.example.editor",
             windowTitle: kind == .idle ? nil : "notes.txt",
@@ -24,19 +25,18 @@ struct ActivityRepositoryTests {
             endedAt: base + end,
             source: "test",
             sessionID: sessionID
-        )
+        )))
     }
 
     @Test("insert assigns an id and round-trips every field", arguments: ActivityEventKind.allCases)
     func insertRoundTrip(_ kind: ActivityEventKind) throws {
-        let original = event(kind, from: 0, to: 30)
+        let original = try event(kind, from: 0, to: 30)
         let inserted = try repository.insert(original)
         #expect(inserted.id != nil)
+        #expect(inserted == ActivityEvent(original, id: inserted.id))
 
         let fetched = try repository.events(overlapping: DateInterval(start: base, duration: 30))
-        var expected = original
-        expected.id = inserted.id
-        #expect(fetched == [expected])
+        #expect(fetched == [inserted])
     }
 
     @Test("events(overlapping:) returns half-open overlaps, oldest first")
