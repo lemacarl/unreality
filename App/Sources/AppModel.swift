@@ -11,17 +11,21 @@ import UnrealityPlatform
 @Observable
 final class AppModel {
     let captureState = CaptureStateStore()
+    /// User settings, persisted in UserDefaults (non-secret values only).
+    let settings: SettingsModel
     let pauseHotkeyController: PauseHotkeyController
     /// True when the system refused to register the pause hotkey.
     private(set) var isPauseHotkeyUnavailable = false
     @ObservationIgnored private let logger = Logger(subsystem: AppIdentity.bundleIdentifier, category: "app")
 
-    /// - Parameter pauseHotkey: override the default pause shortcut here
-    ///   until the settings UI (#13) can change it.
+    /// - Parameter pauseHotkey: override the default pause shortcut here.
+    ///   The settings window shows it read-only; rebinding is not built yet.
     init(
         pauseHotkey: Hotkey = .defaultPause,
-        hotkeys: any HotkeyRegistrar = CarbonHotkeyRegistrar()
+        hotkeys: any HotkeyRegistrar = CarbonHotkeyRegistrar(),
+        settingsStore: any SettingsStore = UserDefaultsSettingsStore()
     ) {
+        settings = SettingsModel(store: settingsStore)
         pauseHotkeyController = PauseHotkeyController(store: captureState, registrar: hotkeys, hotkey: pauseHotkey)
     }
 

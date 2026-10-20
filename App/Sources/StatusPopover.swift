@@ -3,9 +3,11 @@ import SwiftUI
 import UnrealityCore
 import UnrealityPlatform
 
-/// Popover shown from the menu-bar status item.
+/// Popover shown from the menu-bar status item. "Settings…" opens the
+/// Settings scene (`SettingsView`).
 struct StatusPopover: View {
     let model: AppModel
+    @Environment(\.openSettings) private var openSettings
     private var store: CaptureStateStore { model.captureState }
 
     var body: some View {
@@ -44,15 +46,24 @@ struct StatusPopover: View {
             Divider()
 
             HStack {
-                Text("macOS \(PlatformInfo.operatingSystemVersion)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Button("Settings…") {
+                    // A menu-bar-only (LSUIElement) app is not active while
+                    // its popover is open; activate it so the window comes
+                    // to the front instead of opening behind other apps.
+                    NSApplication.shared.activate()
+                    openSettings()
+                }
+                .keyboardShortcut(",")
                 Spacer()
                 Button("Quit \(AppIdentity.displayName)") {
                     NSApplication.shared.terminate(nil)
                 }
                 .keyboardShortcut("q")
             }
+
+            Text("macOS \(PlatformInfo.operatingSystemVersion)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(16)
         .frame(width: 280)

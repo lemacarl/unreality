@@ -19,6 +19,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/).
 - `swiftlint_version` pin in `.swiftlint.yml` (#11).
 - `WallClock` and `Scheduler` protocols with `SystemClock`/`DispatchScheduler` and a `FakeTime` test double (#15).
 - Global pause hotkey, Control-Option-Command-P by default, toggling `CaptureStateStore` via `HotkeyRegistrar` (Carbon `RegisterEventHotKey`) and `PauseHotkeyController`, with `FakeHotkeyRegistrar` (#15).
+- `SettingsStore` protocol with typed `SettingKey`/`SettingValue` values, `AppSettings` (idle threshold and retention-window placeholders), an `InMemorySettingsStore` fake and an observable `SettingsModel` in `UnrealityCore`; `UserDefaultsSettingsStore` in `UnrealityPlatform`, so settings persist across launches. Unit tests cover the contract against both stores (#13).
+- Settings window (SwiftUI `Settings` scene) opened from a "Settings…" button in the status popover, with General (read-only pause shortcut), Capture (idle threshold), Privacy (retention windows) and AI sections; capture, blocklist and AI content are stubs for later milestones (#13).
 
 ### Changed
 - `CaptureStateStore` is now owned by an `AppModel` held by the app delegate instead of the SwiftUI `App` struct (#15).

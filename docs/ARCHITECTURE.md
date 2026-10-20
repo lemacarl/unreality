@@ -1,6 +1,6 @@
 # Architecture
 
-Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16) and a global pause hotkey (#15); no capture yet.
+Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16), a global pause hotkey (#15) and a settings window backed by `SettingsStore` (#13); no capture yet.
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ flowchart LR
 ## Menu bar and capture state
 - `CaptureStateStore` (UnrealityCore) is the single source of truth for whether capture is `running` or `paused`. It is `@MainActor` and `@Observable` (Observation framework), exposes `state`, `isPaused`, `pause()`, `resume()` and `toggle()`, ignores same-state writes, and starts in `running`. It holds state only; it is not persisted across launches. The global pause hotkey (#15) calls `toggle()`, and the capture pipeline (M3) will observe it.
 - The app owns one store via `AppModel` (App/Sources/AppModel.swift), which `AppDelegate` (wired with `@NSApplicationDelegateAdaptor`) creates and keeps for the app's lifetime, so the global hotkey handler and SwiftUI share it. `UnrealityApp` shows it through a SwiftUI `MenuBarExtra` with `.window` style (a popover-like panel). The status item is a template SF Symbol (`eye` running, `eye.slash` paused) so macOS tints it for light and dark menu bars. The popover shows the state, a Pause/Resume button and Quit (Cmd-Q). Display strings and symbol names live in the app (`StatusPopover.swift`), not the core.
-- The popover also shows the pause shortcut, or that it could not be registered.
+- The popover also shows the pause shortcut, or that it could not be registered, and a "Settings…" button (Cmd-,) that opens the settings window (see [Settings](#settings)).
 - `MenuBarExtra` is sufficient for now; switch to `NSStatusItem` + `NSPopover` (ADR 0001) only if it proves limiting.
 
 ## Time and hotkeys
@@ -38,7 +38,7 @@ Protocols in UnrealityCore, real implementations in UnrealityPlatform, fakes in 
 | `Scheduler`: `schedule(after:repeating:_:)` returning a cancellable `ScheduledWork` | `DispatchScheduler` (`DispatchSourceTimer` on a given queue) | `FakeTime`: time moves only on `advance(by:)`, which runs due work in order |
 | `HotkeyRegistrar` (`@MainActor`) | `CarbonHotkeyRegistrar` (`RegisterEventHotKey`; no Accessibility or Input Monitoring permission, sees only its own combination) | `FakeHotkeyRegistrar` with `press(_:)` |
 
-`PauseHotkeyController` (core) binds a `Hotkey` to `CaptureStateStore.toggle()`. The default is `Hotkey.defaultPause`, Control-Option-Command-P (key code 35: a physical key position, labelled P on QWERTY layouts; other layouts may show a different letter there, and deriving the label from the layout is for the settings UI); override it in code via `AppModel(pauseHotkey:)` until a settings UI exists. If registration fails the app logs the OS status and the popover says the shortcut could not be registered; it does not guess why. Only refusals the OS reports are detectable (for example `eventHotKeyExistsErr` for a combination already registered in this process). A combination held by another app, or a system shortcut, is not detected: `RegisterEventHotKey` returns `noErr` and presses may never arrive. So the menu-bar icon and popover, not the shortcut, are the source of truth for pause state. `CarbonHotkeyRegistrar` and `PauseHotkeyController` release their registrations in `deinit`, so they must be released on the main thread (their main-actor owner, `AppModel`, ensures this). Launch at login (`LoginItemService` via `SMAppService`) is tracked in #56.
+`PauseHotkeyController` (core) binds a `Hotkey` to `CaptureStateStore.toggle()`. The default is `Hotkey.defaultPause`, Control-Option-Command-P (key code 35: a physical key position, labelled P on QWERTY layouts; other layouts may show a different letter there, and deriving the label from the layout is for the settings UI); override it in code via `AppModel(pauseHotkey:)`; the settings window shows it read-only and rebinding is not built yet. If registration fails the app logs the OS status and the popover says the shortcut could not be registered; it does not guess why. Only refusals the OS reports are detectable (for example `eventHotKeyExistsErr` for a combination already registered in this process). A combination held by another app, or a system shortcut, is not detected: `RegisterEventHotKey` returns `noErr` and presses may never arrive. So the menu-bar icon and popover, not the shortcut, are the source of truth for pause state. `CarbonHotkeyRegistrar` and `PauseHotkeyController` release their registrations in `deinit`, so they must be released on the main thread (their main-actor owner, `AppModel`, ensures this). Launch at login (`LoginItemService` via `SMAppService`) is tracked in #56.
 
 ## Repository layout
 | Path | Contents |
@@ -49,6 +49,7 @@ Protocols in UnrealityCore, real implementations in UnrealityPlatform, fakes in 
 | `Sources/UnrealityPlatform` | Real OS integrations; depends on the core |
 | `Tests/` | Swift Testing suites per library |
 | `App/` + `project.yml` | Menu-bar app shell (`LSUIElement`, macOS 14, bundle ID `com.lemacarl.unreality`); `Unreality.xcodeproj` is generated by XcodeGen and gitignored |
+| `App/Sources` | `UnrealityApp` (scenes), `AppModel`/`AppDelegate`, `StatusPopover`, `SettingsView` |
 | `Config/` | `Signing.xcconfig` (ad-hoc default) with an optional, gitignored `Local.xcconfig` override |
 
 ## Swift language mode
@@ -57,6 +58,29 @@ Protocols in UnrealityCore, real implementations in UnrealityPlatform, fakes in 
 Considered and not enabled: Swift 6.2's default MainActor isolation (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` / `.defaultIsolation(MainActor.self)`) and the "approachable concurrency" upcoming features. Most of the code is background capture, OCR and storage, so implicit MainActor isolation would push work onto the UI thread by default, and the packages and the app shell should share one set of rules. UI types are annotated `@MainActor` explicitly. Revisit for the App target if the annotation noise grows.
 
 Revisit the mode if a required Apple framework is unusable under strict concurrency; in UnrealityPlatform prefer a local `@preconcurrency import` over dropping the mode (in UnrealityCore the import allow-list still applies).
+
+## Settings
+Non-secret user configuration (#13). Protocol and typed values in UnrealityCore (`Settings.swift`), the real store in UnrealityPlatform:
+
+| Type | Module | Role |
+|---|---|---|
+| `SettingValue` | core | Property-list primitive a store can hold (`Int`, `Bool`). `SecretValue` does not conform, so a secret cannot be written to settings |
+| `SettingKey<Value>` | core | Storage name, default and sanitiser (integer keys clamp to a range). Missing or wrong-typed stored values read as the default; out-of-range ones are clamped on read and write. Shipped names are never renamed |
+| `AppSettings` | core | The settings that exist so far (below) and `allNames` |
+| `SettingsStore` | core | `value(for:)`, `setValue(_:for:)`, `removeValue(for:)`; `Sendable`, synchronous |
+| `InMemorySettingsStore` | core | Fake for tests and previews (`setRawObject` simulates stale or hand-edited data) |
+| `UserDefaultsSettingsStore` | platform | Real store; the app uses `UserDefaults.standard` (domain `com.lemacarl.unreality`), tests a throwaway suite |
+| `SettingsModel` | core | `@MainActor @Observable` cache over a store for SwiftUI: `model[key]` reads and writes (sanitised, written through at once), `reset(_:)` restores the default |
+
+Contract (unset reads as default, set replaces, remove restores the default and is idempotent, keys independent, wrong types read as the default) is unit-tested against the fake (`SettingsStoreContractTests`) and against UserDefaults (`UserDefaultsSettingsStoreTests`, including persistence across store instances).
+
+| Setting (`AppSettings`) | Default | Range | Read by |
+|---|---|---|---|
+| `idleThresholdMinutes` | 5 | 1–60 | idle detection (#18); placeholder, unused |
+| `rawCaptureRetentionHours` | 24 | 1–24 | raw-capture retention job (#27), which sets the final default; placeholder, not enforced |
+| `contentRetentionDays` | 30 | 1–365 | capture store / retention (#26), which sets the final default; placeholder, not enforced |
+
+The window is a SwiftUI `Settings` scene (`App/Sources/SettingsView.swift`) with tabs General (pause shortcut, read-only, and whether it registered; rebinding is not built), Capture (idle threshold; screen capture stub), Privacy (retention windows; blocklist stub) and AI (stub; the API key will go to the Keychain, never settings). `AppModel` owns the `SettingsModel`. Because the app is `LSUIElement`, the popover activates the app before calling `openSettings` so the window comes to the front. Launch at login is #56.
 
 ## Secrets
 Secrets (the Claude API key) live only in the macOS Keychain (#14). `UnrealityCore` declares the `SecretStore` protocol (ADR 0001 calls it `KeychainStore`), the `SecretKey` / `SecretValue` types, `SecretStoreError`, and the `InMemorySecretStore` fake used by tests and previews. `UnrealityPlatform` has `KeychainSecretStore`, built on the Security framework.
