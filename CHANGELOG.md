@@ -21,6 +21,10 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/).
 - Global pause hotkey, Control-Option-Command-P by default, toggling `CaptureStateStore` via `HotkeyRegistrar` (Carbon `RegisterEventHotKey`) and `PauseHotkeyController`, with `FakeHotkeyRegistrar` (#15).
 - `SettingsStore` protocol with typed `SettingKey`/`SettingValue` values, `AppSettings` (idle threshold and retention-window placeholders), an `InMemorySettingsStore` fake and an observable `SettingsModel` in `UnrealityCore`; `UserDefaultsSettingsStore` in `UnrealityPlatform`, so settings persist across launches. Unit tests cover the contract against both stores (#13).
 - Settings window (SwiftUI `Settings` scene) opened from a "Settings…" button in the status popover, with General (read-only pause shortcut), Capture (idle threshold), Privacy (retention windows) and AI sections; capture, blocklist and AI content are stubs for later milestones (#13).
+- `ActivitySource` protocol and `ActivitySample` / `FrontmostApp` types with a `FakeActivitySource`; `WorkspaceActivitySource` reads the frontmost app (NSWorkspace activation notifications) and its focused window title (Accessibility API, `AXObserver`; no polling) (#17).
+- `AccessibilityTrust` protocol with `SystemAccessibilityTrust` (`AXIsProcessTrusted`; prompts only on explicit request) and `FakeAccessibilityTrust`; without Accessibility permission activity degrades to app-only samples (#17).
+- `ActivityCoordinator`: stops the activity source while capture is paused, publishes Accessibility trust state (restarting the source when trust is granted), strips titles without trust, for processes without a bundle ID and for Unreality's own windows, and requires an `ActivitySampleFilter` (the seam for the privacy filter, #20) (#17).
+- `CaptureStateStore.onChange(_:)` for synchronous, cancellable state-change handlers (#17).
 
 ### Changed
 - `CaptureStateStore` is now owned by an `AppModel` held by the app delegate instead of the SwiftUI `App` struct (#15).

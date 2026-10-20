@@ -30,6 +30,8 @@ public enum CaptureState: String, Sendable, Equatable, CaseIterable {
 public final class CaptureStateStore {
     /// Current state. Change it through `pause()`, `resume()` or `toggle()`.
     public private(set) var state: CaptureState
+    @ObservationIgnored private var changeHandlers: [Int: @MainActor (CaptureState) -> Void] = [:]
+    @ObservationIgnored private var lastHandlerID = 0
 
     /// Convenience for UI.
     public var isPaused: Bool { state == .paused }
@@ -54,9 +56,40 @@ public final class CaptureStateStore {
         transition(to: state.toggled)
     }
 
+    /// Calls `handler` synchronously, on the main actor, after every state
+    /// change, until the returned subscription is cancelled.
+    /// For non-UI code (the activity coordinator) that must react to a pause
+    /// before anything else is recorded; SwiftUI uses Observation instead.
+    public func onChange(_ handler: @escaping @MainActor (CaptureState) -> Void) -> CaptureStateSubscription {
+        lastHandlerID += 1
+        let id = lastHandlerID
+        changeHandlers[id] = handler
+        return CaptureStateSubscription { [weak self] in self?.changeHandlers[id] = nil }
+    }
+
     private func transition(to newState: CaptureState) {
         // Skip same-value writes so observers are not invalidated needlessly.
         guard state != newState else { return }
         state = newState
+        for id in changeHandlers.keys.sorted() {
+            changeHandlers[id]?(newState)
+        }
+    }
+}
+
+/// Handle returned by `CaptureStateStore.onChange(_:)`. Cancelling twice is
+/// harmless. Releasing the handle does not cancel (it may be released off
+/// the main thread), so owners call `cancel()` when they are done.
+@MainActor
+public final class CaptureStateSubscription {
+    private var onCancel: (@MainActor () -> Void)?
+
+    init(onCancel: @escaping @MainActor () -> Void) {
+        self.onCancel = onCancel
+    }
+
+    public func cancel() {
+        onCancel?()
+        onCancel = nil
     }
 }
