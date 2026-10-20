@@ -13,7 +13,7 @@ ADR 0001 chose native Swift; the guardrails require an ADR for each dependency. 
 | XcodeGen | build tool | MIT | Generates the Xcode project from `project.yml`; avoids hand-edited `.xcodeproj` merge conflicts. Not shipped. |
 | SwiftLint | lint tool | MIT | Standard Swift linter; CLI-runnable in CI. Not shipped. |
 
-No other dependencies are approved. Hotkeys use Carbon directly; Sparkle (updates) needs its own ADR in M7. Versions are pinned in the scaffold issue, which also re-checks maintenance health.
+No other dependencies are approved. Hotkeys use Carbon directly; Sparkle (updates) needs its own ADR in M7. Versions are pinned in the scaffold issue (#10), which also re-checks maintenance health.
 
 ## Consequences
 One runtime dependency (GRDB) enters the app; the two tools are build-time only.

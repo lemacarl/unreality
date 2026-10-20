@@ -1,7 +1,7 @@
 # Contributing
 
 ## Workflow
-- Branches: `feat/<issue#>-<slug>`, `fix/<issue#>-<slug>`, `chore/<slug>`, `spike/<slug>` (throwaway prototypes, never merged; ADRs land via `docs/` or `chore/` branches).
+- Branches: `feat/<issue#>-<slug>`, `fix/<issue#>-<slug>`, `chore/<slug>`, `docs/<slug>`, `spike/<slug>` (throwaway prototypes, never merged; ADRs land via `docs/` or `chore/` branches).
 - Commits: conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
 - PRs: title `<type>: <summary> (#<issue>)`, body has `Closes #<issue>`, how it was tested, open concerns. Squash-merged after CI is green and independent review approves. Never push to `main` directly.
 - Docs and CHANGELOG are updated in the same PR as the change.
