@@ -25,22 +25,27 @@ When it is read: once when tracking starts or resumes, on every app switch, and 
 
 Permission: Unreality checks whether it has Accessibility access without prompting (`AXIsProcessTrusted`) and exposes that state; the system prompt is shown only when the user asks for it (`requestAccess()`, for a future onboarding/settings button), never silently at launch. Without the permission, samples are app-only (no titles; nothing is recorded yet). Revoking it takes effect at the next app switch or title change. After granting it, titles start at the next app switch, or immediately when the app re-checks the permission (`refreshAccessibilityTrust()`, for example when it becomes active again).
 
-Before a title is read, the privacy filter is asked whether that app's titles may be read at all, so excluded apps' titles are never read. This is per app: excluding a site or a private window inside a browser can only drop or redact the sample after its title was read into memory (#19, #20), before anything is stored. That filter is #20: until it lands, samples are not stored or shown anywhere (the source is not yet wired into the app).
+Before a title is read, the privacy filter is asked whether that app's titles may be read at all, so excluded apps' titles are never read. This is per app: excluding a site or a private window inside a browser can only drop or redact the sample after its title was read into memory (#19, #20), before anything is stored. That filter is `PrivacyFilter` (#20, see [Privacy filter](#privacy-filter)); samples are still not stored or shown anywhere, because the source is not yet wired into the app.
 
 ## What leaves the device
 Only text built from the signals above (app/window titles, redacted URLs, OCR text, active/idle totals, presence totals) is sent to the Claude API for summaries, only after the user enables it and supplies a key. Images, webcam frames and excluded-app data are never sent. Excluded apps/sites are filtered before storage; screen capture must use ScreenCaptureKit app/window exclusion so excluded windows are not captured even when visible behind another app (tracked in #23).
 
 ## Privacy filter
-`PrivacyFilter` (UnrealityCore, #20) sits between capture and storage. Every captured sample passes through it; storage accepts only its output.
+The privacy filter (UnrealityCore, #20) sits between capture and storage, in two places:
 
-**Guarantee.** The repository's only insert takes a `FilteredEvent`, a type that only `PrivacyFilter` can create (its initialiser is private to the filter's file and it is not `Decodable`); the stored-event type `ActivityEvent` cannot be inserted. So a sample from an excluded app or site produces no row, and no URL is stored unredacted, by construction rather than by convention. Unit tests feed fixture samples from excluded apps and sites through the filter into a recording repository, an in-memory database and a database file, and check that none of them (nor a sentinel in their titles) is stored or written to disk.
+1. **At capture**, `ActivityCoordinator` (#17) asks `PrivacyFilter` before reading any window title (`allowsWindowTitle(for:)`: no for excluded apps, so their titles are never read) and runs every sample through it (`filter(_:)`: samples from excluded apps are dropped, including app-only samples without a title). The coordinator itself already withholds titles without Accessibility permission, for processes without a bundle ID and for Unreality's own windows.
+2. **Before storage**, the same rules (`PrivacyRules`) turn a sample, plus the span's end and, for browser spans, the URL, into a `FilteredEvent`, checking the app again and the URL's site.
 
-**What it does to each sample:**
-- **Excluded app** (frontmost app's bundle ID on the blocklist): dropped entirely.
-- **Excluded site** (URL host, or a parent domain of it, on the blocklist): dropped entirely, including the window title.
-- **URL that cannot be checked** (unparseable, no scheme, an `http(s)` URL without a host, or a web sample without a URL): dropped entirely. The filter fails closed rather than store a title it could not attribute.
+**Guarantee.** The repository's only insert takes a `FilteredEvent`, a type that only the privacy rules can create (its initialiser is private to the filter's file and it is not `Decodable`). The stored-event type `ActivityEvent` cannot be inserted. So activity in an excluded app or site produces no row, and no URL is stored unredacted, by construction rather than by convention. `FilteredEvent` has no field for the process ID or app display name, so neither is stored. Unit tests run fixture activity from excluded apps and sites through the coordinator and the rules into a recording repository, an in-memory database and a database file. They check that none of it (nor a sentinel in its titles) is stored or written to disk.
+
+**What it does:**
+- **Excluded app** (frontmost app's bundle ID on the blocklist): titles never read, every sample dropped, no event.
+- **Excluded site** (URL host, or a parent domain of it, on the blocklist): no event, so the window title is not stored either.
+- **URL that cannot be checked** (unparseable, no scheme, or an `http(s)` URL without a host): no event. The filter fails closed rather than store a title it could not attribute.
 - **Other URLs:** `http(s)` URLs keep only `scheme://host[:port]/path`. The query, fragment, `user:password@` credentials and `;` path parameters (such as `;jsessionid=`) are dropped, rather than the whole URL being blanked; the host is lowercased. A stricter mode (`hostOnly`) also drops the path. Other schemes (`file:`, `data:`, `about:`, browser-extension pages) keep only the scheme, since they carry local paths or content rather than a site.
-- **Idle samples:** stored without app, title or URL.
+- **Idle spans** are stored without app, title or URL.
+
+Browser URLs are not captured yet (#19). Until then, site rules apply where events are built from a sample and a URL; when #19 adds the URL to samples, the site check also moves into `filter(_:)`.
 
 **Blocklist.** Matching is case-insensitive. A bundle ID entry matches exactly or, ending in `.*`, the prefix and everything under it (`com.example.*`). A domain entry matches that host and all its subdomains (`example.com` matches `www.example.com`, not `notexample.com`); a scheme, path, port, `*.` or leading dot in an entry is ignored. User entries extend the defaults (`Blocklist.defaults.union(user)`); the settings UI that collects and persists them, and lets users remove a default, comes in M6.
 
@@ -50,8 +55,9 @@ Only text built from the signals above (app/window titles, redacted URLs, OCR te
 - Defaults are best effort. Bundle IDs change between app versions and new apps appear. Banking is mostly done in the browser, so the defaults cover only a few large banks and payment services by domain, and no banking apps: add your own bank's app and site.
 - The filter decides what is stored, not what is captured. Screenshots of excluded windows must be avoided at capture time with ScreenCaptureKit exclusion (#23).
 - Adding an entry does not remove data stored before it was added.
+- Time spent in an excluded app is not attributed to it, but because its samples are dropped, whatever builds spans from samples (not built yet) cannot tell from the samples alone when the previous app's span ended.
 
-**Logging.** Window titles and URLs are never logged. `ActivitySample`, `FilteredEvent` and `ActivityEvent` redact the title and URL in `description`, `debugDescription`, string interpolation and `dump`, so logging one by mistake does not leak them. GRDB's `publicStatementArguments` stays off (set explicitly; a test checks that a database error does not contain the inserted title), so SQLite error messages never carry stored values.
+**Logging.** Window titles and URLs are never logged. `ActivitySample`, `FilteredEvent` and `ActivityEvent` redact the window title (and URL) in `description`, `debugDescription`, string interpolation and `dump`, so logging one by mistake does not leak them. GRDB's `publicStatementArguments` stays off (set explicitly; a test checks that a database error does not contain the inserted title), so SQLite error messages never carry stored values.
 
 ### Default exclusions
 Source of truth: `DefaultExclusions` in `Sources/UnrealityCore/Privacy/Blocklist.swift`; keep this table in sync.

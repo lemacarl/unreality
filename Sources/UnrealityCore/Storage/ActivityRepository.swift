@@ -50,17 +50,6 @@ public protocol ActivityRepository: Sendable {
     func deleteSessions(endedBefore cutoff: Date) throws -> Int
 }
 
-extension ActivityRepository {
-    /// Runs `sample` through `filter` and stores the result, if any.
-    /// - Returns: the stored event, or `nil` when the filter dropped the
-    ///   sample (nothing is written).
-    @discardableResult
-    public func insert(_ sample: ActivitySample, filteredBy filter: PrivacyFilter) throws -> ActivityEvent? {
-        guard let event = filter.filter(sample) else { return nil }
-        return try insert(event)
-    }
-}
-
 /// GRDB-backed `ActivityRepository`. Created by `DatabaseManager`.
 struct GRDBActivityRepository: ActivityRepository {
     let writer: any DatabaseWriter

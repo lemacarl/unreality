@@ -15,17 +15,7 @@ struct ActivityRepositoryTests {
 
     private func event(_ kind: ActivityEventKind = .app, from start: TimeInterval, to end: TimeInterval,
                        sessionID: Int64? = nil) throws -> FilteredEvent {
-        // Storage takes only filtered events; the blocklist is irrelevant here.
-        try #require(PrivacyFilter(blocklist: .empty).filter(ActivitySample(
-            kind: kind,
-            appBundleID: kind == .idle ? nil : "com.example.editor",
-            windowTitle: kind == .idle ? nil : "notes.txt",
-            url: kind == .web ? "https://example.com/" : nil,
-            startedAt: base + start,
-            endedAt: base + end,
-            source: "test",
-            sessionID: sessionID
-        )))
+        try TestEvents.event(kind, from: base + start, to: base + end, sessionID: sessionID)
     }
 
     @Test("insert assigns an id and round-trips every field", arguments: ActivityEventKind.allCases)
