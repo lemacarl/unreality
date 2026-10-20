@@ -1,7 +1,7 @@
 # Contributing
 
 ## Workflow
-- Branches: `feat/<issue#>-<slug>`, `fix/<issue#>-<slug>`, `chore/<slug>`, `spike/<slug>` (never merged).
+- Branches: `feat/<issue#>-<slug>`, `fix/<issue#>-<slug>`, `chore/<slug>`, `spike/<slug>` (throwaway prototypes, never merged; ADRs land via `docs/` or `chore/` branches).
 - Commits: conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
 - PRs: title `<type>: <summary> (#<issue>)`, body has `Closes #<issue>`, how it was tested, open concerns. Squash-merged after CI is green and independent review approves. Never push to `main` directly.
 - Docs and CHANGELOG are updated in the same PR as the change.
@@ -19,4 +19,4 @@ Dev builds must use a stable signing identity and bundle ID, or macOS drops Scre
 | Reviewer | Claude Opus 5.5 | High | Code, functional, privacy/security reviews (fresh context, never the PR's builder) |
 | Researcher | Claude Sonnet 5.5 | Medium | Research for ADRs; gathers evidence, does not decide |
 
-Definitions live in `.claude/agents/`.
+Builder, Reviewer and Researcher are defined in `.claude/agents/`; the PM is the main orchestrating session.

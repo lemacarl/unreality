@@ -5,7 +5,7 @@
 - Spike: #1
 
 ## Context
-Unreality needs ScreenCaptureKit, Vision OCR, AVFoundation face detection, Accessibility, idle time, Keychain, menu-bar presence and launch-at-login, with strong privacy, low resource use, CI testability and CLI-driven agent builds. Three researchers evaluated the options (evidence: vendor docs, issue trackers, repo licences; some points were flagged unverified by the researchers).
+Unreality needs ScreenCaptureKit, Vision OCR, AVFoundation face detection, Accessibility, idle time, Keychain, menu-bar presence and launch-at-login, with strong privacy, low resource use, CI testability and CLI-driven agent builds. Three researchers evaluated the options. Evidence is cited under Sources; points the researchers could not verify are marked *(unverified)* and were not decisive.
 
 ## Options
 1. **Native Swift + SwiftUI/AppKit** (SwiftPM core + thin Xcode app shell).
@@ -15,14 +15,16 @@ Unreality needs ScreenCaptureKit, Vision OCR, AVFoundation face detection, Acces
 ## Scoring (1–5, weighted by priority order)
 | Criterion (weight) | Native Swift | Tauri + Swift | Screenpipe/AW |
 |---|---|---|---|
-| macOS capability access (7) | 5 | 3 (≈60% of risky code is Swift/objc2 anyway) | 2 |
+| macOS capability access (7) | 5 | 3 (researcher estimate, *unverified*: most OS-facing code ends up Swift/objc2 anyway) | 2 |
 | Privacy / on-device (6) | 5 | 4 | 1 (Screenpipe stores raw frames/audio, telemetry on by default) |
-| Resource use (5) | 5 | 3 | 1 (5–20% CPU, 0.5–3 GB RAM reported) |
+| Resource use (5) | 5 | 3 (webview/extra processes; figures unmeasured) | 1 (5–20% CPU, 0.5–3 GB RAM per its README) |
 | CI testability (4) | 4 | 3 (three toolchains) | 2 |
 | Agent productivity (3) | 3 | 2 (Swift+Rust+TS, TCC attribution) | 2 |
 | Maintenance / licence (2) | 4 | 3 | 1 (Screenpipe commercial licence bars distribution and competing products) |
 | Packaging / notarisation (1) | 4 | 2 (nested signing unverified) | 1 |
-| **Weighted total (/140)** | **~129** | **~84** | **~51** |
+| **Weighted total (/140)** | **127** | **86** | **42** |
+
+Native Swift scores at least as high as both alternatives on every criterion, so the outcome does not depend on the weights.
 
 ## Decision
 **Native Swift.** Layout:
@@ -39,5 +41,14 @@ Unreality needs ScreenCaptureKit, Vision OCR, AVFoundation face detection, Acces
 - Dev builds need a stable signing identity to keep TCC grants; documented in CONTRIBUTING.
 - Notarisation needs a paid Apple Developer account (escalated to the owner).
 
+## Sources
+- Screenpipe licence, telemetry, resource claims, architecture: https://github.com/mediar-ai/screenpipe and https://github.com/mediar-ai/screenpipe/blob/main/LICENSE.md
+- ActivityWatch (MPL-2.0, events only): https://github.com/ActivityWatch/activitywatch
+- macOS 15 monthly screen-recording re-prompt: https://9to5mac.com/2024/08/14/macos-sequoia-screen-recording-prompt-monthly/ (2024 beta reporting; re-verify on current macOS)
+- Tauri sidecars: https://v2.tauri.app/develop/sidecar/ ; screencapturekit Rust crate: https://docs.rs/crate/screencapturekit/8.0.1
+- TCC/ad-hoc signing pitfalls: https://github.com/CapSoftware/Cap/issues/1722
+- Tauri/Electron memory figures (blog-grade, unmeasured): https://www.pkgpulse.com/guides/electron-vs-tauri-2026
+- Runner images and Xcode availability: https://github.com/actions/runner-images
+
 ## Revisit if
-Native UI work proves a bottleneck relative to web UI, or Apple restricts the needed capture APIs in a way a different runtime would avoid.
+Screenpipe/ActivityWatch licensing or resource profile changes materially, `MenuBarExtra`/SwiftData mature enough to drop the AppKit/GRDB choices, or native UI work proves a bottleneck relative to web UI, or Apple restricts the needed capture APIs in a way a different runtime would avoid.
