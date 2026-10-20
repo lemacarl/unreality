@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+xcuserdata/
+.swiftpm/
+.claude/worktrees/
+*.p12
+*.cer
+*.mobileprovision
+.env
