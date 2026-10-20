@@ -47,14 +47,16 @@ custom_rules:
   # false positive. Matches inside comments and strings are ignored.
   # Known residual (contrived): a comment between `import` and the module
   # name, e.g. `import /* c */ AppKit`, is not caught. CI backstop tracked
-  # in #11. GRDB is added to the core list by the storage issue (#16).
+  # in #11. GRDB (ADR 0002, storage, #16) is used only by the core (not
+  # enforced outside it yet; the CI backstop in #11 could); the core's tests
+  # reach storage through UnrealityCore's API.
   # How to verify: CONTRIBUTING.md, "Lint rules".
   core_no_os_imports:
     name: "UnrealityCore must not import OS frameworks"
     included: "Sources/UnrealityCore/.*\\.swift"
-    regex: "(?<![\\w.`])import\\s+(?>(?:(?:typealias|struct|class|enum|protocol|let|var|func)\\s+)?)`?(?!(?:Foundation|Dispatch|Observation|Synchronization|RegexBuilder)\\b)\\w+"
+    regex: "(?<![\\w.`])import\\s+(?>(?:(?:typealias|struct|class|enum|protocol|let|var|func)\\s+)?)`?(?!(?:Foundation|Dispatch|Observation|Synchronization|RegexBuilder|GRDB)\\b)\\w+"
     excluded_match_kinds: [comment, doccomment, string]
-    message: "UnrealityCore may only import Foundation, Dispatch, Observation, Synchronization and RegexBuilder; put OS integrations behind a protocol in UnrealityPlatform."
+    message: "UnrealityCore may only import Foundation, Dispatch, Observation, Synchronization, RegexBuilder and GRDB; put OS integrations behind a protocol in UnrealityPlatform."
     severity: error
   # Same guard for the core's tests (fakes only), which may also import the
   # module under test and Swift Testing.

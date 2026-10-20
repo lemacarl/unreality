@@ -17,6 +17,8 @@ No other dependencies are approved. Hotkeys use Carbon directly; Sparkle (update
 
 _Note (#10):_ XcodeGen and SwiftLint are pinned in CONTRIBUTING.md (Tool versions). The scaffold needs no runtime dependency, so GRDB is not added yet; its version pin and health re-check are deferred to the storage issue (#16).
 
+_Note (#16):_ GRDB.swift is pinned at exactly 7.11.1 (health re-check in CONTRIBUTING.md, Tool versions) and is used only by `UnrealityCore` (not enforced outside it yet; the CI backstop in #11 could).
+
 ## Consequences
 One runtime dependency (GRDB) enters the app; the two tools are build-time only.
 

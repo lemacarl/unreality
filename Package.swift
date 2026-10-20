@@ -13,12 +13,20 @@ let package = Package(
         .library(name: "UnrealityCore", targets: ["UnrealityCore"]),
         .library(name: "UnrealityPlatform", targets: ["UnrealityPlatform"])
     ],
+    dependencies: [
+        // ADR 0002. Exact pin; bump deliberately (CONTRIBUTING.md, "Tool versions").
+        .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.11.1")
+    ],
     targets: [
-        // Pure logic and domain types. May import only Foundation, Dispatch,
-        // Observation, Synchronization and RegexBuilder: a regex-based guard
+        // Pure logic, domain types and storage. May import only Foundation,
+        // Dispatch, Observation, Synchronization, RegexBuilder and GRDB
+        // (ADR 0002): a regex-based guard
         // (SwiftLint `core_no_os_imports`, `core_tests_no_os_imports` for its
         // tests); CI backstop tracked in #11.
-        .target(name: "UnrealityCore"),
+        .target(
+            name: "UnrealityCore",
+            dependencies: [.product(name: "GRDB", package: "GRDB.swift")]
+        ),
         // Real implementations of the protocols declared in UnrealityCore.
         .target(
             name: "UnrealityPlatform",
