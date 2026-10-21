@@ -1,6 +1,6 @@
 # Privacy
 
-Target behaviour (implemented so far: Keychain storage of the API key (#14), local SQLite storage (#16), the global pause hotkey (#15), settings (#13), the frontmost app / window title source (#17, not yet wired into the app or storage), the privacy filter that drops excluded apps and sites before storage (#20) and launch at login (#56); no capture is recorded yet. This document is updated with every capture-related change).
+Target behaviour (implemented so far: Keychain storage of the API key (#14), local SQLite storage (#16), the global pause hotkey (#15), settings (#13), the frontmost app / window title source (#17, not yet wired into the app or storage), the privacy filter that drops excluded apps and sites before storage (#20), the aggregation of samples into stored events and sessions (#21, not yet wired into the app) and launch at login (#56); no capture is recorded yet. This document is updated with every capture-related change).
 
 | Signal | Stored | Retention | Leaves device |
 |---|---|---|---|
@@ -75,7 +75,9 @@ Browser URLs are not captured yet (#19). Until then, site rules apply where even
 - **Defaults are best effort.** Bundle IDs change between app versions, and new apps appear. Banking is mostly done in the browser, so the defaults cover some large banks and payment services by domain and no banking apps: add your own bank's app and site.
 - **The filter decides what is stored, not what is captured.** Screenshots of excluded windows must be avoided at capture time with ScreenCaptureKit exclusion (#23).
 - **No retroactive deletion.** Adding an entry does not remove data stored before it was added.
-- **Excluded-app time may be misattributed.** Time spent in an excluded app may currently be counted as time in the app used before it. Its samples are dropped, so the step that builds spans from samples cannot tell when the previous app's span ended. That will hold until #21 adds an anonymous boundary marker for excluded activity.
+- **Excluded time is a visible gap.** When an excluded app becomes frontmost, its sample is dropped and the coordinator sends an anonymous boundary (a timestamp only: no app, title, URL or reason) that ends the previous app's span and session (#21). So excluded time is never counted as time in the previous app. Nothing is stored for the excluded interval, but the timeline will show untracked time there, as it does for a pause. Idle time that starts in an excluded app is stored as an idle span, without an app.
+
+**Aggregation (#21).** A sample becomes a stored event only when its span completes, built through the app's single `PrivacyFilter` with the rules at that moment: if an app is excluded while it is in use, its open span is not stored. Spans are split at local midnight. A stored session runs from its first stored event to its last and is ended by any dropped or excluded time, so no session covers excluded time. Nothing is stored for paused time. Boundaries themselves are never stored. A span still open is held only in memory and is lost if the app quits without finishing it.
 
 **Logging.** Window titles and URLs are never logged. `ActivitySample`, `FilteredEvent` and `ActivityEvent` redact the window title (and URL) in `description`, `debugDescription`, string interpolation and `dump`, so logging one by mistake does not leak them; the internal parsed-URL type does the same. GRDB's `publicStatementArguments` stays off: it is set explicitly, and a test checks that a database error does not contain the inserted title. So SQLite error messages never carry stored values.
 
