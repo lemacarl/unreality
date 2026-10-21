@@ -27,7 +27,9 @@ import Foundation
 ///   the previous one is treated as happening at the previous one, so
 ///   output never goes backwards or overlaps.
 /// - Activity spans are emitted inside a session (`sessionStarted` before,
-///   `sessionEnded` after); idle spans are emitted outside any session.
+///   `sessionEnded` after); idle spans are emitted outside any session. A
+///   session is emitted only once its first non-empty span completes, so
+///   there are no empty sessions.
 public struct SpanAggregator: Sendable {
     public enum Input: Sendable, Equatable {
         case sample(ActivitySample)
@@ -54,7 +56,10 @@ public struct SpanAggregator: Sendable {
     private var open: OpenSpan?
     /// The app frontmost when idle began, resumed when idle ends.
     private var frontmost: ActivitySample?
-    private var sessionOpen = false
+    /// Start of the current session, if one is open.
+    private var sessionStart: Date?
+    /// Whether `sessionStarted` was emitted for the current session.
+    private var sessionEmitted = false
     private var lastTime: Date?
 
     public init(calendar: Calendar) {
@@ -71,7 +76,7 @@ public struct SpanAggregator: Sendable {
     }
 
     /// Whether a span or session is open (output still pending).
-    public var isOpen: Bool { open != nil || sessionOpen }
+    public var isOpen: Bool { open != nil || sessionStart != nil }
 
     /// Applies `input` and returns what it completed, in order.
     public mutating func consume(_ input: Input) -> [Output] {
@@ -114,9 +119,9 @@ public struct SpanAggregator: Sendable {
     }
 
     private mutating func startActivity(_ sample: ActivitySample, into outputs: inout [Output]) {
-        if !sessionOpen {
-            sessionOpen = true
-            outputs.append(.sessionStarted(sample.timestamp))
+        if sessionStart == nil {
+            sessionStart = sample.timestamp
+            sessionEmitted = false
         }
         open = .activity(sample)
         frontmost = sample
@@ -125,7 +130,12 @@ public struct SpanAggregator: Sendable {
     private mutating func closeOpenSpan(at end: Date, into outputs: inout [Output]) {
         switch open {
         case let .activity(sample):
-            for piece in splitAtMidnight(from: sample.timestamp, to: end) {
+            let pieces = splitAtMidnight(from: sample.timestamp, to: end)
+            if let start = sessionStart, !sessionEmitted, !pieces.isEmpty {
+                sessionEmitted = true
+                outputs.append(.sessionStarted(start))
+            }
+            for piece in pieces {
                 var part = sample
                 part.timestamp = piece.start
                 outputs.append(.activity(part, until: piece.end))
@@ -139,9 +149,10 @@ public struct SpanAggregator: Sendable {
     }
 
     private mutating func endSession(at time: Date, into outputs: inout [Output]) {
-        guard sessionOpen else { return }
-        sessionOpen = false
-        outputs.append(.sessionEnded(time))
+        guard sessionStart != nil else { return }
+        if sessionEmitted { outputs.append(.sessionEnded(time)) }
+        sessionStart = nil
+        sessionEmitted = false
     }
 
     /// Clamps `date` so time never goes backwards.

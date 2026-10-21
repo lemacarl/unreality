@@ -26,7 +26,10 @@ public protocol ActivityRecordWriter: Sendable {
 /// `PrivacyFilter` instance and its rules at that moment, never a copy: an
 /// app excluded while its span was open is not stored. Idle spans carry no
 /// app, title or URL. Anonymous boundaries are never stored; the time
-/// between a boundary and the next sample is simply not recorded.
+/// between a boundary and the next sample is simply not recorded. A session
+/// is written from its first stored event to its last, and a span dropped
+/// by the rules ends it like a boundary, so a session never covers dropped
+/// time and no empty session is stored.
 ///
 /// A span still open is held in memory until it completes, so it is lost if
 /// the app quits without `finish(at:)`.
@@ -36,6 +39,12 @@ public final class ActivityPipeline {
     private let writer: any ActivityRecordWriter
     private let source: String
     private var aggregator: SpanAggregator
+    /// Whether the aggregator has a session open.
+    private var sessionOpen = false
+    /// End of the last event stored in the open session; `nil` until one is.
+    /// The written session spans its stored events only (the rules may
+    /// drop some or all of them).
+    private var lastStoredEnd: Date?
 
     /// - Parameters:
     ///   - filter: the app's single `PrivacyFilter` (also given to the coordinator).
@@ -73,20 +82,33 @@ public final class ActivityPipeline {
     public func finish(at date: Date) { consume(.boundary(ActivityBoundary(timestamp: date))) }
 
     private func consume(_ input: SpanAggregator.Input) {
-        let commands = aggregator.consume(input).compactMap(command(for:))
+        let commands = aggregator.consume(input).flatMap(commands(for:))
         if !commands.isEmpty { writer.write(commands) }
     }
 
-    private func command(for output: SpanAggregator.Output) -> ActivityRecordCommand? {
+    private func commands(for output: SpanAggregator.Output) -> [ActivityRecordCommand] {
         switch output {
-        case let .sessionStarted(date):
-            return .startSession(date)
-        case let .sessionEnded(date):
-            return .endSession(date)
+        case .sessionStarted:
+            sessionOpen = true
+            lastStoredEnd = nil
+            return []
+        case .sessionEnded:
+            defer { sessionOpen = false; lastStoredEnd = nil }
+            return lastStoredEnd.map { [.endSession($0)] } ?? []
         case let .activity(sample, end):
-            return filter.event(from: sample, until: end, source: source).map { .insert($0) }
+            // The rules as they are now: an app excluded meanwhile is dropped,
+            // and, like a boundary, the dropped time ends the written session.
+            guard let event = filter.event(from: sample, until: end, source: source) else {
+                defer { lastStoredEnd = nil }
+                return lastStoredEnd.map { [.endSession($0)] } ?? []
+            }
+            var commands: [ActivityRecordCommand] = []
+            if sessionOpen, lastStoredEnd == nil { commands.append(.startSession(event.startedAt)) }
+            if sessionOpen { lastStoredEnd = event.endedAt }
+            commands.append(.insert(event))
+            return commands
         case let .idle(interval):
-            return .insert(filter.idleEvent(from: interval.start, until: interval.end, source: source))
+            return [.insert(filter.idleEvent(from: interval.start, until: interval.end, source: source))]
         }
     }
 }
