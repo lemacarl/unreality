@@ -1,6 +1,6 @@
 # Architecture
 
-Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16), a global pause hotkey (#15), a settings window backed by `SettingsStore` (#13), the frontmost app / window title activity source (#17, not yet wired into the app) and the privacy filter in front of storage (#20); no capture is recorded yet.
+Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16), a global pause hotkey (#15), a settings window backed by `SettingsStore` (#13), the frontmost app / window title activity source (#17, not yet wired into the app), the privacy filter in front of storage (#20) and launch at login via `SMAppService` (#56); no capture is recorded yet.
 
 ```mermaid
 flowchart LR
@@ -38,7 +38,7 @@ Protocols in UnrealityCore, real implementations in UnrealityPlatform, fakes in 
 | `Scheduler`: `schedule(after:repeating:_:)` returning a cancellable `ScheduledWork` | `DispatchScheduler` (`DispatchSourceTimer` on a given queue) | `FakeTime`: time moves only on `advance(by:)`, which runs due work in order |
 | `HotkeyRegistrar` (`@MainActor`) | `CarbonHotkeyRegistrar` (`RegisterEventHotKey`; no Accessibility or Input Monitoring permission, sees only its own combination) | `FakeHotkeyRegistrar` with `press(_:)` |
 
-`PauseHotkeyController` (core) binds a `Hotkey` to `CaptureStateStore.toggle()`. The default is `Hotkey.defaultPause`, Control-Option-Command-P (key code 35: a physical key position, labelled P on QWERTY layouts; other layouts may show a different letter there, and deriving the label from the layout is for the settings UI); override it in code via `AppModel(pauseHotkey:)`; the settings window shows it read-only and rebinding is not built yet. If registration fails the app logs the OS status and the popover says the shortcut could not be registered; it does not guess why. Only refusals the OS reports are detectable (for example `eventHotKeyExistsErr` for a combination already registered in this process). A combination held by another app, or a system shortcut, is not detected: `RegisterEventHotKey` returns `noErr` and presses may never arrive. So the menu-bar icon and popover, not the shortcut, are the source of truth for pause state. `CarbonHotkeyRegistrar` and `PauseHotkeyController` release their registrations in `deinit`, so they must be released on the main thread (their main-actor owner, `AppModel`, ensures this). Launch at login (`LoginItemService` via `SMAppService`) is tracked in #56.
+`PauseHotkeyController` (core) binds a `Hotkey` to `CaptureStateStore.toggle()`. The default is `Hotkey.defaultPause`, Control-Option-Command-P (key code 35: a physical key position, labelled P on QWERTY layouts; other layouts may show a different letter there, and deriving the label from the layout is for the settings UI); override it in code via `AppModel(pauseHotkey:)`; the settings window shows it read-only and rebinding is not built yet. If registration fails the app logs the OS status and the popover says the shortcut could not be registered; it does not guess why. Only refusals the OS reports are detectable (for example `eventHotKeyExistsErr` for a combination already registered in this process). A combination held by another app, or a system shortcut, is not detected: `RegisterEventHotKey` returns `noErr` and presses may never arrive. So the menu-bar icon and popover, not the shortcut, are the source of truth for pause state. `CarbonHotkeyRegistrar` and `PauseHotkeyController` release their registrations in `deinit`, so they must be released on the main thread (their main-actor owner, `AppModel`, ensures this). Launch at login: see [Launch at login](#launch-at-login).
 
 ## Activity source
 Frontmost app and focused window title (#17). Protocols and fakes in UnrealityCore, real implementations in UnrealityPlatform; all main-actor bound and event driven (no polling).
@@ -93,7 +93,25 @@ Contract (unset reads as default, set replaces, remove restores the default and 
 | `rawCaptureRetentionHours` | 24 | 1–24 | raw-capture retention job (#27), which sets the final default; placeholder, not enforced |
 | `contentRetentionDays` | 30 | 1–365 | capture store / retention (#26), which sets the final default; placeholder, not enforced |
 
-The window is a SwiftUI `Settings` scene (`App/Sources/SettingsView.swift`) with tabs General (pause shortcut, read-only, and whether it registered; rebinding is not built), Capture (idle threshold; screen capture stub), Privacy (retention windows; blocklist stub) and AI (stub; the API key will go to the Keychain, never settings). `AppModel` owns the `SettingsModel`. Because the app is `LSUIElement`, the popover activates the app before calling `openSettings` so the window comes to the front. Launch at login is #56.
+The window is a SwiftUI `Settings` scene (`App/Sources/SettingsView.swift`) with tabs General (launch at login; pause shortcut, read-only, and whether it registered; rebinding is not built), Capture (idle threshold; screen capture stub), Privacy (retention windows; blocklist stub) and AI (stub; the API key will go to the Keychain, never settings). `AppModel` owns the `SettingsModel`. Because the app is `LSUIElement`, the popover activates the app before calling `openSettings` so the window comes to the front.
+
+## Launch at login
+Launch at login (#56, ADR 0001: `SMAppService`). Protocol, fake and model in UnrealityCore (`LoginItem.swift`), the real service in UnrealityPlatform:
+
+| Type | Module | Role |
+|---|---|---|
+| `LoginItemService` (`@MainActor`) | core | `status()` (no side effects), `register()`, `unregister()` (typed throws `LoginItemError`), `openLoginItemsSettings()` |
+| `LoginItemStatus` | core | `notRegistered`, `enabled`, `requiresApproval`, `notFound`; `isRequested` is true for `enabled` and `requiresApproval` |
+| `LoginItemError` | core | Operation plus the error's domain and code only (no localised text, which may name paths), so it is safe to log |
+| `FakeLoginItemService` | core | Test double: settable status, injectable errors, call counts |
+| `LaunchAtLoginModel` | core | `@MainActor @Observable`, owned by `AppModel`: `status`, `isEnabled`, `lastError`, `refresh()`, `setEnabled(_:)`, `openLoginItemsSettings()` |
+| `SMAppServiceLoginItemService` | platform | `SMAppService.mainApp` (the app itself, no helper bundle); `SMAppService.openSystemSettingsLoginItems()` |
+
+- **macOS is the source of truth.** The status is read from `SMAppService` on every `refresh()` and after every change, never cached across launches or mirrored into settings/UserDefaults, because the user can change it in System Settings > General > Login Items at any time. The General tab re-reads it when it appears and whenever the app becomes active again.
+- **Off by default, never silent.** Nothing registers at launch or on first run; only the user's toggle calls `setEnabled(_:)`. A toggle to the state already in effect calls nothing.
+- **`requiresApproval`** (registered, but the user must allow it in Login Items) shows the toggle as on, explains that approval is needed and offers an "Open Login Items Settings…" button.
+- **Errors** are kept in `lastError` and shown in the tab with the code; the status is re-read either way, and once the status shows the request took effect despite the error (right away, or on a later `refresh()`, for example after the user fixed it in System Settings), the error is dropped. Unknown future statuses map to `notFound` (off).
+- Registration needs a signed app in a stable location; ad-hoc and unsigned dev builds may report `notFound`, fail, or leave stale entries (CONTRIBUTING.md, "Manual checks"). Unit tests use the fake; only the status and error mapping of the real service is unit-tested.
 
 ## Secrets
 Secrets (the Claude API key) live only in the macOS Keychain (#14). `UnrealityCore` declares the `SecretStore` protocol (ADR 0001 calls it `KeychainStore`), the `SecretKey` / `SecretValue` types, `SecretStoreError`, and the `InMemorySecretStore` fake used by tests and previews. `UnrealityPlatform` has `KeychainSecretStore`, built on the Security framework.

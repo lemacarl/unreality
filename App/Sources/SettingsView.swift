@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UnrealityCore
 
@@ -28,6 +29,7 @@ private struct GeneralSettingsTab: View {
 
     var body: some View {
         Form {
+            LaunchAtLoginSection(launchAtLogin: model.launchAtLogin)
             Section {
                 LabeledContent("Pause or resume capture") {
                     Text(model.pauseHotkeyController.hotkey.displayString)
@@ -46,6 +48,53 @@ private struct GeneralSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Launch-at-login toggle. The status always comes from macOS: it is
+/// re-read when the tab appears and whenever the app becomes active again,
+/// for example after the user changes it in System Settings.
+private struct LaunchAtLoginSection: View {
+    let launchAtLogin: LaunchAtLoginModel
+
+    var body: some View {
+        Section {
+            Toggle(
+                "Open \(AppIdentity.displayName) at login",
+                isOn: Binding(get: { launchAtLogin.isEnabled }, set: { launchAtLogin.setEnabled($0) })
+            )
+            if launchAtLogin.status == .requiresApproval {
+                Text(
+                    "macOS needs your approval before \(AppIdentity.displayName) can open at login. "
+                        + "Turn it on in System Settings > General > Login Items."
+                )
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Login Items Settings…") {
+                    launchAtLogin.openLoginItemsSettings()
+                }
+            }
+            if let error = launchAtLogin.lastError {
+                Text(errorMessage(error))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } header: {
+            Text("Startup")
+        } footer: {
+            Text("Off by default. You can also change this in System Settings > General > Login Items.")
+                .foregroundStyle(.secondary)
+        }
+        .onAppear { launchAtLogin.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            launchAtLogin.refresh()
+        }
+    }
+
+    private func errorMessage(_ error: LoginItemError) -> String {
+        let action = error.operation == .register ? "turn on" : "turn off"
+        return "macOS could not \(action) opening at login (error \(error.code)). "
+            + "Launch at login may need a signed copy of \(AppIdentity.displayName) in the Applications folder."
     }
 }
 

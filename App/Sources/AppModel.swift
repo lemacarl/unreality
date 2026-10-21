@@ -14,6 +14,9 @@ final class AppModel {
     /// User settings, persisted in UserDefaults (non-secret values only).
     let settings: SettingsModel
     let pauseHotkeyController: PauseHotkeyController
+    /// Launch at login. macOS (`SMAppService`) holds the state; it is never
+    /// registered without the user turning it on in Settings.
+    let launchAtLogin: LaunchAtLoginModel
     /// True when the system refused to register the pause hotkey.
     private(set) var isPauseHotkeyUnavailable = false
     @ObservationIgnored private let logger = Logger(subsystem: AppIdentity.bundleIdentifier, category: "app")
@@ -23,9 +26,11 @@ final class AppModel {
     init(
         pauseHotkey: Hotkey = .defaultPause,
         hotkeys: any HotkeyRegistrar = CarbonHotkeyRegistrar(),
-        settingsStore: any SettingsStore = UserDefaultsSettingsStore()
+        settingsStore: any SettingsStore = UserDefaultsSettingsStore(),
+        loginItems: any LoginItemService = SMAppServiceLoginItemService()
     ) {
         settings = SettingsModel(store: settingsStore)
+        launchAtLogin = LaunchAtLoginModel(service: loginItems)
         pauseHotkeyController = PauseHotkeyController(store: captureState, registrar: hotkeys, hotkey: pauseHotkey)
     }
 
