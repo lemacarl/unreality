@@ -114,12 +114,13 @@ struct PrivacyRulesTests {
             == "https://example.com/")
     }
 
-    @Test("allowed non-web URLs keep only the scheme", arguments: [
+    @Test("allowed non-web URLs keep only the scheme (host-less) or the scheme and host", arguments: [
         ("about:blank", "about:"),
         ("ABOUT:newtab", "about:"),
         ("data:text/html,<b>secret</b>", "data:"),
-        ("chrome://settings/passwords", "chrome:"),
-        ("ftp://example.com/x?y", "ftp:")
+        ("chrome://settings/appearance", "chrome://settings"),
+        ("chrome://history/?q=bank", "chrome://history"),
+        ("ftp://user:pw@Example.com:21/x?y", "ftp://example.com")
     ])
     func nonWebSchemes(_ raw: String, _ expected: String) throws {
         #expect(try redacted(raw) == expected)
