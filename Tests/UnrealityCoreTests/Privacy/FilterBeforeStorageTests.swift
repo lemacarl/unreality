@@ -66,6 +66,12 @@ struct FilterBeforeStorageTests {
         add("com.apple.Safari", "allowed-page", "https://example.com/docs?session=\(sentinel)")
         for url in Self.excludedSites { add("com.apple.Safari", "\(sentinel) site", url) }
         add("com.apple.Safari", "\(sentinel) unparsable", "\(sentinel) not a url")
+        add("com.google.Chrome", "\(sentinel) statement.pdf", "blob:https://secure.chase.com/2f1c-uuid")
+        add("com.google.Chrome", "\(sentinel) source", "view-source:https://www.paypal.com/myaccount")
+        add("com.google.Chrome", "\(sentinel) chat", "blob:https://web.whatsapp.com/1234-uuid")
+        add("com.google.Chrome", "\(sentinel) vault", "chrome-extension://aeblfdkhhhdcdjpifhhbdiojplfjncoa/home.html")
+        add("com.apple.Safari", "\(sentinel) vault", "safari-web-extension://4A1B2C3D/popup.html")
+        add("com.apple.Safari", "\(sentinel) local", "file:///Users/someone/statement.pdf")
         return entries
     }
 
@@ -101,7 +107,7 @@ struct FilterBeforeStorageTests {
         let repository = RecordingRepository()
         var pending: ActivitySample?
         func close(at end: Date) throws {
-            if let previous = pending, let event = filter.rules.event(from: previous, until: end, source: "fixture") {
+            if let previous = pending, let event = filter.event(from: previous, until: end, source: "fixture") {
                 try repository.insert(event)
             }
         }

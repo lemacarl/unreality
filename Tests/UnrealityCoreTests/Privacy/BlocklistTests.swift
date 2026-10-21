@@ -42,11 +42,34 @@ struct BlocklistTests {
         #expect(Blocklist(domains: [entry]).domains == ["example.com"])
     }
 
-    @Test("empty and whitespace entries are ignored")
+    @Test("empty, whitespace and invalid entries are ignored")
     func emptyEntries() {
-        let list = Blocklist(bundleIDPatterns: ["", "  ", ".*"], domains: ["", " ", "*.", "https://"])
+        let list = Blocklist(bundleIDPatterns: ["", "  ", ".*", "*", "com.*.app", "*.example", "com.ex*.*"],
+                             domains: ["", " ", "*.", "https://", "exa mple.com", "[::1"])
         #expect(list == .empty)
         #expect(!list.excludes(bundleID: ""))
+        #expect(!list.excludes(bundleID: "*"))
+        #expect(!list.excludes(bundleID: "com.example.app"))
+    }
+
+    @Test("IPv6 entries keep the whole address", arguments: ["[::1]", "::1", "[::1]:8080", "http://[::1]:80/x"])
+    func ipv6Entries(_ entry: String) {
+        let list = Blocklist(domains: [entry])
+        #expect(list.domains == ["[::1]"])
+        #expect(list.excludes(host: "[::1]"))
+        #expect(list.excludes(host: "::1"))
+        #expect(!list.excludes(host: "[::2]"))
+    }
+
+    @Test("IDN entries and hosts compare in punycode form")
+    func idn() {
+        #expect(Blocklist(domains: ["bücher.de"]).domains == ["xn--bcher-kva.de"])
+        #expect(Blocklist(domains: ["XN--BCHER-KVA.DE"]).domains == ["xn--bcher-kva.de"])
+        let list = Blocklist(domains: ["xn--bcher-kva.de"])
+        #expect(list.excludes(host: "bücher.de"))
+        #expect(list.excludes(host: "www.BÜCHER.de"))
+        #expect(list.excludes(host: "xn--bcher-kva.de"))
+        #expect(!list.excludes(host: "bucher.de"))
     }
 
     @Test("union adds user entries to the defaults")
@@ -81,11 +104,41 @@ struct BlocklistTests {
     @Test("every default entry is listed in its category")
     func defaultsMatchCategories() {
         let expected = Blocklist(
-            bundleIDPatterns: DefaultExclusions.passwordManagerApps + DefaultExclusions.messagingApps,
+            bundleIDPatterns: DefaultExclusions.passwordManagerApps + DefaultExclusions.messagingApps
+                + DefaultExclusions.mailApps,
             domains: DefaultExclusions.passwordManagerSites + DefaultExclusions.messagingSites
                 + DefaultExclusions.bankingSites
         )
         #expect(Blocklist.defaults == expected)
         #expect(!DefaultExclusions.bankingSites.isEmpty)
+        // Every default entry is valid (none silently ignored).
+        let all = DefaultExclusions.allBundleIDPatterns
+        #expect(Blocklist.defaults.bundleIDs.count + Blocklist.defaults.bundleIDPrefixes.count == Set(all).count)
+        #expect(Blocklist.defaults.domains.count == Set(DefaultExclusions.allDomains).count)
+    }
+
+    @Test("docs/PRIVACY.md lists exactly the default exclusions")
+    func defaultsMatchPrivacyDoc() throws {
+        let root = URL(filePath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let doc = try String(contentsOf: root.appending(path: "docs/PRIVACY.md"), encoding: .utf8)
+        let start = try #require(doc.range(of: "### Default exclusions\n"))
+        let section = doc[start.upperBound...]
+        let end = section.range(of: "\n#")?.lowerBound ?? section.endIndex
+        let rows = section[..<end].split(separator: "\n").filter { $0.hasPrefix("|") && !$0.hasPrefix("|---") }
+        var listed: [String] = []
+        for row in rows.dropFirst() { // header row
+            listed += row.matches(of: /`([^`]+)`/).map { String($0.output.1) }
+        }
+        let expected = DefaultExclusions.allBundleIDPatterns + DefaultExclusions.allDomains
+        #expect(Set(listed) == Set(expected))
+        #expect(listed.count == expected.count, "no entry listed twice")
+    }
+
+    @Test("mail apps are excluded by default")
+    func mailDefaults() {
+        #expect(Blocklist.defaults.excludes(bundleID: "com.apple.mail"))
+        #expect(Blocklist.defaults.excludes(bundleID: "com.microsoft.Outlook"))
     }
 }

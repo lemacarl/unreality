@@ -35,9 +35,16 @@ struct PrivacyRulesTests {
         #expect(rules.allowsWindowTitle(for: raw.app))
     }
 
-    @Test("an app without a bundle ID passes (the coordinator withholds its title)")
-    func noBundleID() {
-        #expect(rules.filter(sample(nil, title: nil)) != nil)
+    @Test("an app without a bundle ID is kept app-only: its title is neither allowed nor stored")
+    func noBundleID() throws {
+        #expect(!rules.allowsWindowTitle(for: app(nil)))
+        let kept = try #require(rules.filter(sample(nil, title: "Secret window")))
+        #expect(kept.windowTitle == nil)
+        #expect(kept.app == app(nil))
+        let event = try #require(rules.event(from: sample(nil, title: "Secret window"), until: start + 1,
+                                             source: "test"))
+        #expect(event.windowTitle == nil)
+        #expect(event.appBundleID == nil)
     }
 
     @Test("excluded apps: titles may not be read and every sample is dropped, also app-only ones",
@@ -105,21 +112,80 @@ struct PrivacyRulesTests {
             == "https://example.com/")
     }
 
-    @Test("non-web schemes keep only the scheme", arguments: [
-        ("file:///Users/someone/Documents/plan.pdf", "file:"),
+    @Test("allowed non-web URLs keep only the scheme", arguments: [
         ("about:blank", "about:"),
+        ("ABOUT:newtab", "about:"),
         ("data:text/html,<b>secret</b>", "data:"),
-        ("chrome-extension://abcdefgh/popup.html?x", "chrome-extension:")
+        ("chrome://settings/passwords", "chrome:"),
+        ("ftp://example.com/x?y", "ftp:")
     ])
     func nonWebSchemes(_ raw: String, _ expected: String) throws {
         #expect(try redacted(raw) == expected)
     }
 
+    @Test("other schemes with a host are checked against the blocklist", arguments: [
+        "ftp://files.paypal.com/statement.pdf", "wss://web.whatsapp.com/ws", "chrome://chase.com/"
+    ])
+    func nonWebSchemesWithExcludedHost(_ raw: String) {
+        #expect(web(raw) == .drop(.excludedSite))
+    }
+
     @Test("a URL that cannot be checked drops the event (fails closed)", arguments: [
-        "not a url", "", "https://", "https:///path", "//example.com/no-scheme", "example.com"
+        "not a url", "", "https://", "https:///path", "//example.com/no-scheme", "example.com",
+        "https:chase.com", "file:///Users/someone/Documents/plan.pdf", "javascript:alert(1)",
+        "mailto:someone@example.com", "blob:", "blob:not a url", "view-source:", "blob:file:///x",
+        "blob:view-source:blob:https://example.com/1"
     ])
     func uncheckableURL(_ raw: String) {
         #expect(web(raw) == .drop(.uncheckableURL))
+    }
+
+    @Test("wrapped URLs are checked by their inner URL", arguments: [
+        "blob:https://secure.chase.com/2f1c-uuid", "BLOB:https://www.chase.com/x",
+        "view-source:https://www.chase.com/login", "blob:https://web.whatsapp.com/1234-uuid",
+        "filesystem:https://my.1password.com/temporary/export.csv", "view-source:blob:https://paypal.com/1"
+    ])
+    func wrappedExcludedSite(_ raw: String) {
+        #expect(web(raw) == .drop(.excludedSite))
+    }
+
+    @Test("allowed wrapped URLs keep the wrapper and the redacted inner URL", arguments: [
+        ("blob:https://example.com/2f1c-uuid?x=1", "blob:https://example.com/"),
+        ("view-source:https://example.com/a/b?token=1#f", "view-source:https://example.com/a/b"),
+        ("filesystem:https://example.com/temporary/file.txt", "filesystem:https://example.com/")
+    ])
+    func wrappedAllowed(_ raw: String, _ expected: String) throws {
+        #expect(try redacted(raw) == expected)
+    }
+
+    @Test("browser-extension pages are dropped", arguments: [
+        "chrome-extension://aeblfdkhhhdcdjpifhhbdiojplfjncoa/home.html#/vault",
+        "safari-web-extension://4A1B2C3D-0000-0000-0000-000000000000/popup.html",
+        "safari-extension://com.example.ext/page.html", "moz-extension://abc/index.html",
+        "blob:chrome-extension://abc/1"
+    ])
+    func extensionPages(_ raw: String) {
+        #expect(web(raw) == .drop(.excludedExtensionPage))
+    }
+
+    @Test("internationalised and IPv6 hosts are stored in canonical form", arguments: [
+        ("https://BÜCHER.de/x", "https://xn--bcher-kva.de/x"),
+        ("https://xn--bcher-kva.de/x", "https://xn--bcher-kva.de/x"),
+        ("https://[2001:DB8::1]:8080/p?q", "https://[2001:db8::1]:8080/p")
+    ])
+    func canonicalHosts(_ raw: String, _ expected: String) throws {
+        #expect(try redacted(raw) == expected)
+    }
+
+    @Test("IDN blocklist entries match in either form")
+    func idnEntries() {
+        for entry in ["bücher.de", "xn--bcher-kva.de", "BÜCHER.DE"] {
+            let custom = PrivacyRules(blocklist: Blocklist(domains: [entry]))
+            for url in ["https://bücher.de/", "https://xn--bcher-kva.de/", "https://shop.BÜCHER.de/"] {
+                #expect(custom.evaluate(sample("com.apple.Safari"), until: start, url: url, source: "test")
+                    == .drop(.excludedSite), "\(entry) vs \(url)")
+            }
+        }
     }
 
     @Test("idle events keep no app, title or URL")
@@ -173,6 +239,18 @@ struct PrivacyFilterTests {
         filter.rules.blocklist = .defaults.union(Blocklist(bundleIDPatterns: ["com.example.*"]))
         #expect(!filter.allowsWindowTitle(for: allowed))
         #expect(filter.filter(sample) == nil)
+    }
+
+    @Test("events built through the filter use its current rules, not a stale copy")
+    func eventsUseCurrentRules() throws {
+        let filter = PrivacyFilter()
+        let sample = ActivitySample(timestamp: .now, trigger: .snapshot, app: allowed, windowTitle: "t")
+        let url = "https://intranet.example/page"
+        #expect(filter.event(from: sample, until: .now, url: url, source: "test") != nil)
+        filter.rules.blocklist = .defaults.union(Blocklist(domains: ["intranet.example"]))
+        #expect(filter.evaluate(sample, until: .now, url: url, source: "test") == .drop(.excludedSite))
+        #expect(filter.event(from: sample, until: .now, url: url, source: "test") == nil)
+        #expect(filter.idleEvent(from: .now, until: .now, source: "test").kind == .idle)
     }
 
     @Test("with the coordinator, excluded apps' titles are never read and their samples never delivered")
