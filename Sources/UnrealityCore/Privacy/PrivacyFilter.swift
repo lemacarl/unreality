@@ -35,14 +35,20 @@ public struct FilteredEvent: Sendable, Equatable {
 }
 
 /// Why the privacy rules dropped activity. Carries no captured data.
-public enum PrivacyDropReason: Sendable, Equatable, CaseIterable {
+public enum PrivacyDropReason: Error, Sendable, Equatable, CaseIterable {
     /// The frontmost app is on the blocklist.
     case excludedApp
     /// The URL's host is on the blocklist.
     case excludedSite
-    /// A URL was present but could not be parsed (or had no host), so the
-    /// site could not be checked (fails closed).
+    /// A URL was present but could not be parsed, or had no host to check
+    /// (other than `about:` and `data:`), so the site could not be checked
+    /// (fails closed). Wrapped URLs (`blob:`, `view-source:`,
+    /// `filesystem:`) are checked by their inner URL.
     case uncheckableURL
+    /// A browser-extension page (`chrome-extension://`,
+    /// `safari-web-extension://`, ...), for example a password manager's
+    /// vault opened in a tab.
+    case excludedExtensionPage
 }
 
 /// Outcome of ``PrivacyRules/evaluate(_:until:url:source:sessionID:)``.
@@ -69,16 +75,21 @@ public struct PrivacyRules: Sendable, Equatable {
     }
 
     /// Whether `app`'s window titles may be read at all: false for excluded
-    /// apps. (`ActivityCoordinator` already refuses apps without a bundle
-    /// ID and Unreality's own process.)
+    /// apps and for apps without a bundle ID (no rule could match them).
+    /// `ActivityCoordinator` also refuses Unreality's own process.
     public func allowsWindowTitle(for app: FrontmostApp) -> Bool {
-        !isExcluded(app)
+        app.bundleID != nil && !isExcluded(app)
     }
 
     /// `sample`, or `nil` when it comes from an excluded app (including
-    /// app-only samples without a title).
+    /// app-only samples without a title). A sample from an app without a
+    /// bundle ID is kept without its title (fails closed on an unknown app).
     public func filter(_ sample: ActivitySample) -> ActivitySample? {
-        isExcluded(sample.app) ? nil : sample
+        if isExcluded(sample.app) { return nil }
+        guard sample.app.bundleID == nil, sample.windowTitle != nil else { return sample }
+        var appOnly = sample
+        appOnly.windowTitle = nil
+        return appOnly
     }
 
     /// The event to store for the activity `sample` started, lasting until
@@ -94,9 +105,13 @@ public struct PrivacyRules: Sendable, Equatable {
         guard let sample = filter(sample) else { return .drop(.excludedApp) }
         var redactedURL: String?
         if let url {
-            guard let parsed = RedactableURL(url) else { return .drop(.uncheckableURL) }
-            if let host = parsed.host, blocklist.excludes(host: host) { return .drop(.excludedSite) }
-            redactedURL = parsed.redacted(urlRedaction)
+            switch RedactableURL.parse(url) {
+            case let .failure(reason):
+                return .drop(reason)
+            case let .success(parsed):
+                if let host = parsed.host, blocklist.excludes(host: host) { return .drop(.excludedSite) }
+                redactedURL = parsed.redacted(urlRedaction)
+            }
         }
         return .keep(FilteredEvent(
             kind: redactedURL == nil ? .app : .web,
@@ -135,7 +150,12 @@ public struct PrivacyRules: Sendable, Equatable {
 /// The real `ActivitySampleFilter` for `ActivityCoordinator`: asked before
 /// any window title is read, and run on every sample. Excluded apps' titles
 /// are never read and their samples (also app-only ones) are dropped.
-/// Update ``rules`` to apply a changed blocklist (settings UI, M6).
+///
+/// The app keeps one instance as the single source of truth for the user's
+/// rules: update ``rules`` to apply a changed blocklist (settings UI, M6),
+/// and build stored events through ``event(from:until:url:source:sessionID:)``
+/// on this instance, then hand the `Sendable` `FilteredEvent` to storage,
+/// rather than keeping a copy of the rules that could go stale.
 @MainActor
 public final class PrivacyFilter: ActivitySampleFilter {
     public var rules: PrivacyRules
@@ -150,6 +170,25 @@ public final class PrivacyFilter: ActivitySampleFilter {
 
     public func filter(_ sample: ActivitySample) -> ActivitySample? {
         rules.filter(sample)
+    }
+
+    /// ``PrivacyRules/evaluate(_:until:url:source:sessionID:)`` with the current rules.
+    public func evaluate(
+        _ sample: ActivitySample, until end: Date, url: String? = nil, source: String, sessionID: Int64? = nil
+    ) -> PrivacyDecision {
+        rules.evaluate(sample, until: end, url: url, source: source, sessionID: sessionID)
+    }
+
+    /// ``PrivacyRules/event(from:until:url:source:sessionID:)`` with the current rules.
+    public func event(
+        from sample: ActivitySample, until end: Date, url: String? = nil, source: String, sessionID: Int64? = nil
+    ) -> FilteredEvent? {
+        rules.event(from: sample, until: end, url: url, source: source, sessionID: sessionID)
+    }
+
+    /// ``PrivacyRules/idleEvent(from:until:source:sessionID:)``.
+    public func idleEvent(from start: Date, until end: Date, source: String, sessionID: Int64? = nil) -> FilteredEvent {
+        rules.idleEvent(from: start, until: end, source: source, sessionID: sessionID)
     }
 }
 

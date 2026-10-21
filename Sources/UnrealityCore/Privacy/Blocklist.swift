@@ -2,25 +2,29 @@ import Foundation
 
 /// Apps and sites whose activity must never be stored.
 ///
-/// Entries are matched case-insensitively:
 /// - **Bundle ID patterns** match a frontmost app's bundle identifier
-///   exactly, or, when the pattern ends in `.*`, the prefix itself and every
-///   identifier under it (`com.example.*` matches `com.example` and
-///   `com.example.app`, not `com.examples`).
+///   case-insensitively: exactly, or, when the pattern ends in `.*`, the
+///   prefix itself and every identifier under it (`com.example.*` matches
+///   `com.example` and `com.example.app`, not `com.examples`). Any other `*`
+///   (including a bare `*`) makes the pattern invalid, and it is ignored.
 /// - **Domains** match a URL's host and every subdomain of it (`example.com`
 ///   matches `example.com` and `www.example.com`, not `notexample.com`).
-///   A leading `*.` or `.`, a scheme, a port and a path are ignored, so
-///   `https://www.example.com/login` is the entry `www.example.com`.
+///   A leading `*.` or `.`, a scheme, user info, a port and a path are
+///   ignored, so `https://www.example.com/login` is the entry
+///   `www.example.com`. Entries and hosts are compared in one canonical
+///   form: lowercase ASCII (internationalised names as punycode, so
+///   `bücher.de` and `xn--bcher-kva.de` are the same entry) without a
+///   trailing dot, and IPv6 addresses in brackets (`[::1]`).
 ///
-/// Empty entries are ignored. The defaults (``defaults``, listed in
-/// docs/PRIVACY.md) are extended with the user's own entries via
+/// Empty or invalid entries are ignored. The defaults (``defaults``, listed
+/// in docs/PRIVACY.md) are extended with the user's own entries via
 /// ``union(_:)``; the settings UI that collects them comes later (M6).
 public struct Blocklist: Sendable, Equatable {
     /// Exact bundle identifiers, lowercased.
     public let bundleIDs: Set<String>
     /// Bundle identifier prefixes from `.*` patterns, lowercased, without the `.*`.
     public let bundleIDPrefixes: Set<String>
-    /// Domains, lowercased and normalised.
+    /// Domains in canonical form (see the type's documentation).
     public let domains: Set<String>
 
     /// An empty blocklist.
@@ -33,8 +37,8 @@ public struct Blocklist: Sendable, Equatable {
             let normalised = pattern.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if normalised.hasSuffix(".*") {
                 let prefix = String(normalised.dropLast(2))
-                if !prefix.isEmpty { prefixes.insert(prefix) }
-            } else if !normalised.isEmpty {
+                if !prefix.isEmpty, !prefix.contains("*") { prefixes.insert(prefix) }
+            } else if !normalised.isEmpty, !normalised.contains("*") {
                 exact.insert(normalised)
             }
         }
@@ -59,9 +63,9 @@ public struct Blocklist: Sendable, Equatable {
         return bundleIDPrefixes.contains { id == $0 || id.hasPrefix($0 + ".") }
     }
 
-    /// Whether activity on `host` (a URL's host) must be dropped.
+    /// Whether activity on `host` (a URL's host, Unicode or punycode) must be dropped.
     public func excludes(host: String) -> Bool {
-        guard let host = Self.normaliseHost(host) else { return false }
+        guard let host = Self.canonicalHost(host) else { return false }
         return domains.contains { host == $0 || host.hasSuffix("." + $0) }
     }
 
@@ -71,37 +75,49 @@ public struct Blocklist: Sendable, Equatable {
         self.domains = domains
     }
 
-    private static func normaliseHost(_ host: String) -> String? {
+    /// Lowercase ASCII (punycode) host without trailing dots, IPv6 in
+    /// brackets; `nil` when `host` is empty or not a valid host.
+    static func canonicalHost(_ host: String) -> String? {
         var host = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         while host.hasSuffix(".") { host.removeLast() }
-        return host.isEmpty ? nil : host
+        if host.contains(":"), !host.hasPrefix("[") { host = "[\(host)]" }
+        guard !host.isEmpty, let encoded = URLComponents(string: "https://\(host)/")?.encodedHost,
+              !encoded.isEmpty
+        else { return nil }
+        return encoded.lowercased()
     }
 
     private static func normaliseDomain(_ entry: String) -> String? {
-        var domain = entry.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var domain = entry.trimmingCharacters(in: .whitespacesAndNewlines)
         if let range = domain.range(of: "://") { domain = String(domain[range.upperBound...]) }
         if let end = domain.firstIndex(where: { "/?#".contains($0) }) { domain = String(domain[..<end]) }
         if let atSign = domain.lastIndex(of: "@") { domain = String(domain[domain.index(after: atSign)...]) }
-        if let colon = domain.lastIndex(of: ":") { domain = String(domain[..<colon]) }
+        if domain.hasPrefix("[") {
+            // IPv6 literal, possibly followed by a port: keep through `]`.
+            guard let close = domain.firstIndex(of: "]") else { return nil }
+            domain = String(domain[...close])
+        } else if domain.filter({ $0 == ":" }).count == 1, let colon = domain.firstIndex(of: ":") {
+            domain = String(domain[..<colon]) // host:port
+        }
         if domain.hasPrefix("*.") { domain.removeFirst(2) }
         while domain.hasPrefix(".") { domain.removeFirst() }
-        return normaliseHost(domain)
+        return canonicalHost(domain)
     }
 }
 
 extension Blocklist {
     /// Built-in exclusions, applied unless the user removes them (M6).
-    /// Keep in sync with docs/PRIVACY.md, "Default exclusions".
+    /// Keep in sync with docs/PRIVACY.md, "Default exclusions" (a test
+    /// compares them).
     public static let defaults = Blocklist(
-        bundleIDPatterns: DefaultExclusions.passwordManagerApps + DefaultExclusions.messagingApps,
-        domains: DefaultExclusions.passwordManagerSites + DefaultExclusions.messagingSites
-            + DefaultExclusions.bankingSites
+        bundleIDPatterns: DefaultExclusions.allBundleIDPatterns,
+        domains: DefaultExclusions.allDomains
     )
 }
 
 /// The default exclusion lists by category. Best effort: bundle IDs change
 /// between app versions, and banking is mostly done on the web, so banking
-/// is covered by domains (a few large banks and payment services); users add
+/// is covered by domains (some large banks and payment services); users add
 /// their own bank's app and site.
 public enum DefaultExclusions {
     public static let passwordManagerApps = [
@@ -111,6 +127,12 @@ public enum DefaultExclusions {
         "com.lastpass.*",
         "org.keepassxc.*",
         "in.sinew.*", // Enpass
+        "me.proton.pass.*", // Proton Pass
+        "com.nordsec.nordpass.*", // NordPass
+        "com.keepersecurity.*", // Keeper
+        "com.dashlane.*",
+        "com.markmcguill.strongbox.*", // Strongbox
+        "com.hicknhacksoftware.MacPass",
         "com.apple.keychainaccess",
         "com.apple.Passwords" // macOS 15 Passwords app
     ]
@@ -119,17 +141,36 @@ public enum DefaultExclusions {
         "com.apple.MobileSMS", // Messages
         "com.apple.FaceTime",
         "net.whatsapp.*",
-        "org.whispersystems.signal-desktop",
+        "desktop.WhatsApp", // older Electron WhatsApp
+        "org.whispersystems.*", // Signal, including beta builds
         "ru.keepcoder.Telegram", // Telegram for macOS
         "com.tdesktop.Telegram", // Telegram Desktop
         "com.facebook.archon.*", // Messenger
-        "com.hnc.Discord"
+        "com.hnc.Discord",
+        "im.riot.app", // Element
+        "com.wearezeta.zclient.mac", // Wire
+        "ch.threema.*",
+        "com.viber.osx",
+        "com.tencent.xinWeChat", // WeChat
+        "jp.naver.line.mac", // LINE
+        "com.automattic.beeper.*", // Beeper
+        "com.beeper.*"
+    ]
+
+    /// Window titles of mail apps are email subjects and senders.
+    public static let mailApps = [
+        "com.apple.mail",
+        "com.microsoft.Outlook"
     ]
 
     public static let passwordManagerSites = [
         "1password.com", "1password.eu", "1password.ca",
         "bitwarden.com", "bitwarden.eu",
         "lastpass.com",
+        "dashlane.com",
+        "keepersecurity.com",
+        "nordpass.com",
+        "pass.proton.me",
         "passwords.google.com"
     ]
 
@@ -138,19 +179,18 @@ public enum DefaultExclusions {
         "web.telegram.org",
         "messenger.com",
         "messages.google.com",
-        "discord.com"
+        "discord.com",
+        "app.element.io"
     ]
 
     public static let bankingSites = [
-        "paypal.com",
-        "wise.com",
-        "revolut.com",
-        "chase.com",
-        "bankofamerica.com",
-        "wellsfargo.com",
-        "citi.com",
-        "capitalone.com",
-        "hsbc.com",
-        "barclays.co.uk"
+        "paypal.com", "venmo.com", "cash.app", "wise.com", "revolut.com", "monzo.com", "n26.com",
+        "coinbase.com", "dashboard.stripe.com",
+        "chase.com", "bankofamerica.com", "wellsfargo.com", "citi.com", "citibank.com", "capitalone.com",
+        "usbank.com", "americanexpress.com", "schwab.com", "fidelity.com",
+        "hsbc.com", "hsbc.co.uk", "hsbc.com.hk", "barclays.co.uk", "lloydsbank.com", "natwest.com"
     ]
+
+    public static var allBundleIDPatterns: [String] { passwordManagerApps + messagingApps + mailApps }
+    public static var allDomains: [String] { passwordManagerSites + messagingSites + bankingSites }
 }
