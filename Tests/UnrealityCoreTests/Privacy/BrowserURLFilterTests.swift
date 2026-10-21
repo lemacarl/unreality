@@ -28,6 +28,28 @@ struct KnownBrowserTests {
         #expect(KnownBrowser.matching(bundleID: bundleID)?.scripting == scripting)
     }
 
+    @Test("docs/PRIVACY.md lists exactly the known browsers")
+    func browsersMatchPrivacyDoc() throws {
+        let root = URL(filePath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let doc = try String(contentsOf: root.appending(path: "docs/PRIVACY.md"), encoding: .utf8)
+        let start = try #require(doc.range(of: "## Browser URLs (#19)\n"))
+        let section = doc[start.upperBound...]
+        let end = section.range(of: "\n## ")?.lowerBound ?? section.endIndex
+        let rows = section[..<end].split(separator: "\n").filter { $0.hasPrefix("|") && !$0.hasPrefix("|---") }
+        var listed: [String] = []
+        for row in rows.dropFirst() { // header row
+            let bundleIDs = row.split(separator: "|", omittingEmptySubsequences: false)[2]
+            listed += bundleIDs.matches(of: /`([^`]+)`/).map { String($0.output.1).lowercased() }
+        }
+        let expected = KnownBrowser.all.flatMap { browser in
+            Array(browser.bundleIDs) + browser.bundleIDPrefixes.map { $0 + "*" }
+        }
+        #expect(Set(listed) == Set(expected))
+        #expect(listed.count == expected.count, "no entry listed twice")
+    }
+
     @Test("other apps are not browsers", arguments: [
         "com.example.notes", "com.apple.finder", "com.google.Chromeish", "com.apple.SafariX", ""
     ])

@@ -41,8 +41,9 @@ public enum PrivacyDropReason: Error, Sendable, Equatable, CaseIterable {
     /// The URL's host is on the blocklist.
     case excludedSite
     /// A URL was present but could not be parsed, or had no host to check
-    /// (other than `about:` and `data:`), so the site could not be checked
-    /// (fails closed). Wrapped URLs (`blob:`, `view-source:`,
+    /// (other than `about:` and `data:`), or had a `\` before its query or
+    /// fragment (parsers disagree on its host), so the site could not be
+    /// checked (fails closed). Wrapped URLs (`blob:`, `view-source:`,
     /// `filesystem:`) are checked by their inner URL.
     case uncheckableURL
     /// A browser-extension page (`chrome-extension://`,

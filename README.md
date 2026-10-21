@@ -29,8 +29,8 @@ The current shell requests no permissions. As features land, Unreality will ask 
 
 - **Screen Recording** (screenshots and on-device OCR)
 - **Camera** (on-device presence detection; frames are never stored)
-- **Accessibility** (frontmost window titles and browser URLs)
-- possibly **Automation** (Apple Events), depending on how browser URLs end up being read
+- **Accessibility** (frontmost window titles; browser URLs are read only for browsers whose titles may be read)
+- **Automation** (Apple Events), once per browser, to read the active tab's URL in Safari and Chrome-family browsers (#19; never prompted silently, see [docs/PRIVACY.md](docs/PRIVACY.md#browser-urls-19))
 
 The Claude API key you supply is stored in the Keychain. That needs no permission grant, but macOS may ask to allow access if the app's signing identity changes (for example between ad-hoc builds).
 
