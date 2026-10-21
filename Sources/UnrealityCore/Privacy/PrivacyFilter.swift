@@ -34,6 +34,17 @@ public struct FilteredEvent: Sendable, Equatable {
     }
 }
 
+extension FilteredEvent {
+    /// This event assigned to session `id` (`nil`: no session); every other
+    /// field is unchanged, so nothing the rules decided can be altered. For
+    /// writers that learn the session's row id only after the event was
+    /// built (``RepositoryRecordWriter``).
+    public func inSession(_ id: Int64?) -> FilteredEvent {
+        FilteredEvent(kind: kind, appBundleID: appBundleID, windowTitle: windowTitle, url: url,
+                      span: (startedAt, endedAt), source: source, sessionID: id)
+    }
+}
+
 /// Why the privacy rules dropped activity. Carries no captured data.
 public enum PrivacyDropReason: Error, Sendable, Equatable, CaseIterable {
     /// The frontmost app is on the blocklist.

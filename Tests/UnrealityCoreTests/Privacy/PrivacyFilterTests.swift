@@ -263,7 +263,7 @@ struct PrivacyFilterTests {
         let source = FakeActivitySource(frontmost: allowed, title: "allowed title")
         let coordinator = ActivityCoordinator(
             source: source, captureState: CaptureStateStore(),
-            trust: FakeAccessibilityTrust(state: .trusted), filter: PrivacyFilter()
+            trust: FakeAccessibilityTrust(state: .trusted), filter: PrivacyFilter(), clock: FakeTime()
         )
         var delivered: [ActivitySample] = []
         coordinator.start { delivered.append($0) }
