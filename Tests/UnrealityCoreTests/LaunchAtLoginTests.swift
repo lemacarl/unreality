@@ -108,6 +108,44 @@ struct LaunchAtLoginTests {
         #expect(model.status == .requiresApproval)
     }
 
+    @Test("refresh clears a register error once macOS reports it on")
+    func refreshClearsRegisterError() {
+        let service = FakeLoginItemService()
+        service.registerError = failure
+        let model = LaunchAtLoginModel(service: service)
+        model.setEnabled(true)
+        #expect(model.lastError == failure)
+        model.refresh()
+        #expect(model.lastError == failure)
+        service.currentStatus = .enabled
+        model.refresh()
+        #expect(model.lastError == nil)
+        #expect(model.isEnabled)
+    }
+
+    @Test("refresh clears an unregister error once macOS reports it off")
+    func refreshClearsUnregisterError() {
+        let service = FakeLoginItemService(status: .enabled)
+        let error = LoginItemError(operation: .unregister, domain: "test", code: 2)
+        service.unregisterError = error
+        let model = LaunchAtLoginModel(service: service)
+        model.setEnabled(false)
+        #expect(model.lastError == error)
+        service.currentStatus = .notRegistered
+        model.refresh()
+        #expect(model.lastError == nil)
+        #expect(!model.isEnabled)
+    }
+
+    @Test("turning on from notFound registers")
+    func registerFromNotFound() {
+        let service = FakeLoginItemService(status: .notFound)
+        let model = LaunchAtLoginModel(service: service)
+        model.setEnabled(true)
+        #expect(service.registerCount == 1)
+        #expect(model.status == .enabled)
+    }
+
     @Test("refresh picks up changes made in System Settings")
     func refreshSeesExternalChange() {
         let service = FakeLoginItemService(status: .enabled)

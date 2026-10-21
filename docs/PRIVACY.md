@@ -1,6 +1,6 @@
 # Privacy
 
-Target behaviour (implemented so far: Keychain storage of the API key (#14), local SQLite storage (#16), the global pause hotkey (#15), settings (#13), the frontmost app / window title source (#17, not yet wired into the app or storage) and the privacy filter that drops excluded apps and sites before storage (#20) and launch at login (#56); no capture is recorded yet. This document is updated with every capture-related change).
+Target behaviour (implemented so far: Keychain storage of the API key (#14), local SQLite storage (#16), the global pause hotkey (#15), settings (#13), the frontmost app / window title source (#17, not yet wired into the app or storage), the privacy filter that drops excluded apps and sites before storage (#20) and launch at login (#56); no capture is recorded yet. This document is updated with every capture-related change).
 
 | Signal | Stored | Retention | Leaves device |
 |---|---|---|---|

@@ -1,6 +1,6 @@
 # Architecture
 
-Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16), a global pause hotkey (#15), a settings window backed by `SettingsStore` (#13), the frontmost app / window title activity source (#17, not yet wired into the app) and the privacy filter in front of storage (#20) and launch at login via `SMAppService` (#56); no capture is recorded yet.
+Stack: native Swift ([ADR 0001](decisions/0001-technology-stack.md)). Status: scaffold plus a menu-bar status item and popover driven by `CaptureStateStore` (#12), the Keychain secret store (#14), the SQLite storage layer (#16), a global pause hotkey (#15), a settings window backed by `SettingsStore` (#13), the frontmost app / window title activity source (#17, not yet wired into the app), the privacy filter in front of storage (#20) and launch at login via `SMAppService` (#56); no capture is recorded yet.
 
 ```mermaid
 flowchart LR
@@ -110,7 +110,7 @@ Launch at login (#56, ADR 0001: `SMAppService`). Protocol, fake and model in Unr
 - **macOS is the source of truth.** The status is read from `SMAppService` on every `refresh()` and after every change, never cached across launches or mirrored into settings/UserDefaults, because the user can change it in System Settings > General > Login Items at any time. The General tab re-reads it when it appears and whenever the app becomes active again.
 - **Off by default, never silent.** Nothing registers at launch or on first run; only the user's toggle calls `setEnabled(_:)`. A toggle to the state already in effect calls nothing.
 - **`requiresApproval`** (registered, but the user must allow it in Login Items) shows the toggle as on, explains that approval is needed and offers an "Open Login Items Settings…" button.
-- **Errors** are kept in `lastError` and shown in the tab with the code; the status is re-read either way, and if macOS recorded the request despite the error (the status matches what was asked), the error is dropped. Unknown future statuses map to `notFound` (off).
+- **Errors** are kept in `lastError` and shown in the tab with the code; the status is re-read either way, and once the status shows the request took effect despite the error (right away, or on a later `refresh()`, for example after the user fixed it in System Settings), the error is dropped. Unknown future statuses map to `notFound` (off).
 - Registration needs a signed app in a stable location; ad-hoc and unsigned dev builds may report `notFound`, fail, or leave stale entries (CONTRIBUTING.md, "Manual checks"). Unit tests use the fake; only the status and error mapping of the real service is unit-tested.
 
 ## Secrets

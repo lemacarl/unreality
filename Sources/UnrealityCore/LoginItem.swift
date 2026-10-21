@@ -129,9 +129,17 @@ public final class LaunchAtLoginModel {
     public var isEnabled: Bool { status.isRequested }
 
     /// Re-reads the status, for example when the settings window appears or
-    /// the app becomes active again after System Settings.
+    /// the app becomes active again after System Settings. Clears
+    /// `lastError` once the status shows the failed request took effect.
     public func refresh() {
-        status = service.status()
+        let current = service.status()
+        // Skip same-value writes so observers are not invalidated needlessly.
+        if current != status {
+            status = current
+        }
+        if let lastError, requestTookEffect(lastError) {
+            self.lastError = nil
+        }
     }
 
     /// Registers or unregisters the login item for an explicit user action.
@@ -153,13 +161,16 @@ public final class LaunchAtLoginModel {
         } catch {
             lastError = error
         }
+        // Also drops the error if macOS recorded the request anyway.
         refresh()
-        // macOS can report a failure while still recording the request
-        // (for example register throwing while approval is pending): the
-        // status, not the error, is what the user needs to act on.
-        if lastError != nil, status.isRequested == enabled {
-            lastError = nil
-        }
+    }
+
+    /// macOS can report a failure while still recording the request (for
+    /// example register throwing while approval is pending, or the user
+    /// changing it in System Settings afterwards): the status, not the
+    /// error, is what the user needs to act on.
+    private func requestTookEffect(_ error: LoginItemError) -> Bool {
+        status.isRequested == (error.operation == .register)
     }
 
     public func openLoginItemsSettings() {
