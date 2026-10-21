@@ -19,7 +19,7 @@ public protocol ActivityRecordWriter: Sendable {
 }
 
 /// Connects capture to storage: feeds ``ActivitySignal``s (from
-/// `ActivityCoordinator.start(signals:)`) and idle transitions into a
+/// `ActivityCoordinator.startSignals(_:)`) and idle transitions into a
 /// ``SpanAggregator`` and writes the completed spans and sessions.
 ///
 /// Events are built when a span is complete, through the app's single
@@ -119,7 +119,13 @@ public final class ActivityPipeline {
 ///
 /// Activity events are assigned to the session opened before them; idle
 /// events to none. If opening a session fails, its events are stored
-/// without a session. Errors go to `onError`, which runs on the queue; they
+/// without a session. If closing one fails, the close is kept and retried
+/// before the next commands (not retried when the session no longer
+/// exists). A session left open anyway (a crash, or a close still failing
+/// at quit) keeps its row and its events' session IDs, which is what a
+/// repair on launch needs; that repair belongs to app integration and
+/// retention (#27). Errors go to `onError`, once per failure (not per
+/// retry), which runs on the queue; they
 /// come from SQLite, whose messages never include stored values
 /// (`publicStatementArguments` is off), but do not log more than the error.
 public final class RepositoryRecordWriter: ActivityRecordWriter, @unchecked Sendable {
@@ -128,6 +134,8 @@ public final class RepositoryRecordWriter: ActivityRecordWriter, @unchecked Send
     private let queue = DispatchQueue(label: "com.lemacarl.unreality.activity-writer")
     /// Accessed only on `queue`.
     private var sessionID: Int64?
+    /// Session closes that failed, retried before the next commands. Only on `queue`.
+    private var pendingCloses: [(id: Int64, end: Date)] = []
 
     public init(repository: any ActivityRepository, onError: @escaping @Sendable (any Error) -> Void = { _ in }) {
         self.repository = repository
@@ -136,6 +144,7 @@ public final class RepositoryRecordWriter: ActivityRecordWriter, @unchecked Send
 
     public func write(_ commands: [ActivityRecordCommand]) {
         queue.async { [self] in
+            retryPendingCloses()
             for command in commands { apply(command) }
         }
     }
@@ -157,10 +166,25 @@ public final class RepositoryRecordWriter: ActivityRecordWriter, @unchecked Send
             case let .endSession(date):
                 guard let id = sessionID else { return }
                 sessionID = nil
-                try repository.endSession(id: id, at: date)
+                close(id, at: date, report: true)
             }
         } catch {
             onError(error)
         }
+    }
+
+    private func close(_ id: Int64, at end: Date, report: Bool) {
+        do {
+            try repository.endSession(id: id, at: end)
+        } catch {
+            if error as? StorageError != .sessionNotFound(id) { pendingCloses.append((id, end)) }
+            if report { onError(error) }
+        }
+    }
+
+    private func retryPendingCloses() {
+        let closes = pendingCloses
+        pendingCloses = []
+        for pending in closes { close(pending.id, at: pending.end, report: false) }
     }
 }

@@ -16,7 +16,7 @@ public struct ActivityBoundary: Sendable, Hashable {
     }
 }
 
-/// What `ActivityCoordinator.start(signals:)` delivers: a filtered sample,
+/// What `ActivityCoordinator.startSignals(_:)` delivers: a filtered sample,
 /// or an anonymous boundary where tracked activity stopped.
 public enum ActivitySignal: Sendable, Equatable {
     /// A sample that passed the coordinator's rules and the privacy filter.

@@ -146,8 +146,8 @@ struct SpanAggregatorTests {
         ], endingAt: 50) == [
             "+s 0", "app com.a 0-10", "-s 10", "idle 10-30", "+s 30", "app com.b 30-50", "-s 50"
         ])
-        // Idle with no app known yet: idle only, nothing resumes.
-        #expect(Fixture.run([Fixture.idleStarted(at: 0), Fixture.idleEnded(at: 30)], endingAt: 40) == ["idle 0-30"])
+        // Idle before any tracked activity is ignored: nothing is stored.
+        #expect(Fixture.run([Fixture.idleStarted(at: 0), Fixture.idleEnded(at: 30)], endingAt: 40).isEmpty)
     }
 
     @Test("switching to an excluded app ends the span at the boundary; switching back starts a new one")
@@ -165,12 +165,12 @@ struct SpanAggregatorTests {
         ])
     }
 
-    @Test("idle in an excluded app: the idle span is kept, but the excluded app is never resumed")
-    func idleAfterExcluded() {
+    @Test("idle after a boundary (excluded app, pause, stop) is ignored, and nothing is resumed")
+    func idleAfterBoundary() {
         #expect(Fixture.run([
             Fixture.sample("com.a", at: 0), Fixture.boundary(at: 10),
             Fixture.idleStarted(at: 20), Fixture.idleEnded(at: 50)
-        ], endingAt: 60) == ["+s 0", "app com.a 0-10", "-s 10", "idle 20-50"])
+        ], endingAt: 60) == ["+s 0", "app com.a 0-10", "-s 10"])
         // A boundary during idle (an excluded app activated, a pause) ends the idle span too.
         #expect(Fixture.run([
             Fixture.sample("com.a", at: 0), Fixture.idleStarted(at: 10), Fixture.boundary(at: 30),
@@ -205,18 +205,40 @@ struct SpanAggregatorTests {
         ])
     }
 
-    @Test("midnight follows the calendar's time zone, including a daylight-saving day",
-          arguments: ["America/New_York", "Europe/Berlin", "Asia/Kolkata", "Pacific/Chatham"])
-    func midnightInTimeZone(_ identifier: String) throws {
-        let calendar = Fixture.calendar(try #require(TimeZone(identifier: identifier)))
-        // 2026-03-07 to 2026-03-10 UTC covers the US daylight-saving change (8 March).
-        let start = Fixture.day.addingTimeInterval(86_400 * 5)
-        let end = start.addingTimeInterval(86_400 * 3)
+    /// A 48-hour span in `zone` from `start`, which must give exactly `spans` pieces.
+    struct ZoneCase: Sendable, CustomTestStringConvertible {
+        let zone: String
+        let start: TimeInterval // seconds since 1970
+        let hours: Double
+        let spans: Int
+        var testDescription: String { zone }
+    }
+
+    static let zoneCases = [
+        // 2026-03-07 00:00 UTC for 72 h, over the US daylight-saving change (8 March).
+        ZoneCase(zone: "America/New_York", start: 1_772_841_600, hours: 72, spans: 4),
+        ZoneCase(zone: "Europe/Berlin", start: 1_772_841_600, hours: 72, spans: 4),
+        ZoneCase(zone: "Asia/Kolkata", start: 1_772_841_600, hours: 72, spans: 4),
+        ZoneCase(zone: "Pacific/Chatham", start: 1_772_841_600, hours: 72, spans: 4),
+        ZoneCase(zone: "UTC", start: 1_772_841_600, hours: 72, spans: 3), // starts at midnight
+        // Daylight saving starts at midnight (the day begins at 01:00): local noon the day before, for 48 h.
+        ZoneCase(zone: "America/Santiago", start: 1_725_724_800, hours: 48, spans: 3), // 2024-09-08
+        ZoneCase(zone: "America/Havana", start: 1_710_003_600, hours: 48, spans: 3), // 2024-03-10
+        ZoneCase(zone: "Asia/Beirut", start: 1_774_692_000, hours: 48, spans: 3), // 2026-03-29
+        ZoneCase(zone: "Africa/Cairo", start: 1_776_938_400, hours: 48, spans: 3) // 2026-04-24
+    ]
+
+    @Test("midnight follows the calendar's time zone, including daylight-saving days", arguments: zoneCases)
+    func midnightInTimeZone(_ zoneCase: ZoneCase) throws {
+        let calendar = Fixture.calendar(try #require(TimeZone(identifier: zoneCase.zone)))
+        let start = Date(timeIntervalSince1970: zoneCase.start)
+        let end = start.addingTimeInterval(zoneCase.hours * 3_600)
         let outputs = SpanAggregator.aggregate([
             .sample(ActivitySample(timestamp: start, trigger: .snapshot,
                                    app: FrontmostApp(bundleID: "com.a", name: nil, processID: 1), windowTitle: nil))
         ], calendar: calendar, endingAt: end)
         let spans = Fixture.spans(outputs)
+        #expect(spans.count == zoneCase.spans)
         #expect(spans.first?.start == start)
         #expect(spans.last?.end == end)
         #expect(zip(spans, spans.dropFirst()).allSatisfy { $0.end == $1.start })
@@ -225,7 +247,6 @@ struct SpanAggregatorTests {
             #expect(span.duration > 0)
         }
         #expect(spans.dropFirst().allSatisfy { calendar.startOfDay(for: $0.start) == $0.start })
-        #expect(spans.count == 4 || spans.count == 3) // three midnights, unless one coincides with `start`
     }
 
     @Test("an input earlier than the previous one is treated as happening at the previous one")

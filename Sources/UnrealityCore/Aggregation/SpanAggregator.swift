@@ -18,7 +18,9 @@ import Foundation
 /// - A boundary ends the open span (activity or idle) and the session, and
 ///   forgets the frontmost app: nothing is attributed until the next sample.
 /// - `idleStarted` ends the open activity span and the session and opens an
-///   idle span. `idleEnded` ends it and, if an app was frontmost when idle
+///   idle span. It is ignored unless an activity span is open, so idle is
+///   never stored for time after a boundary (paused, stopped or in an
+///   excluded app). `idleEnded` ends it and, if an app was frontmost when idle
 ///   began, resumes that app in a new session. A sample while idle ends the
 ///   idle span (the user is evidently back).
 /// - Spans are split at local midnight (per `calendar`), so every emitted
@@ -93,7 +95,8 @@ public struct SpanAggregator: Sendable {
             frontmost = nil
         case let .idleStarted(date):
             let time = advance(to: date)
-            if case .idle = open { break }
+            // Only from tracked activity: never inside paused, stopped or excluded time.
+            guard case .activity = open else { break }
             closeOpenSpan(at: time, into: &outputs)
             endSession(at: time, into: &outputs)
             open = .idle(since: time)
@@ -175,14 +178,20 @@ public struct SpanAggregator: Sendable {
         return pieces
     }
 
+    /// Start of the next calendar day. `dateInterval(of:for:)` rather than
+    /// adding a day to `startOfDay`: where daylight saving starts at
+    /// midnight (America/Santiago, Asia/Beirut, ...) a day can start at
+    /// 01:00, and adding a day would keep that wall-clock time.
     private func nextMidnight(after date: Date) -> Date? {
-        let next = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date))
-        guard let next, next > date else { return nil }
+        guard let next = calendar.dateInterval(of: .day, for: date)?.end, next > date else { return nil }
         return next
     }
 
     /// Whether `lhs` and `rhs` would store the same event: everything but
     /// the time, the trigger and the fields that are never stored.
+    /// When #19 adds a raw URL to `ActivitySample`, compare its
+    /// redacted form, so a query or fragment change does not split spans
+    /// that store the same redacted URL.
     static func sameContent(_ lhs: ActivitySample, _ rhs: ActivitySample) -> Bool {
         normalised(lhs) == normalised(rhs)
     }

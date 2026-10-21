@@ -79,8 +79,13 @@ public final class ActivityCoordinator {
     /// where tracked activity stops: at the timestamp of a sample the filter
     /// dropped (for example an excluded app became frontmost), and at the
     /// clock's time when capture is paused or `stop()` is called. Feed it to
-    /// `ActivityPipeline.receive(_:)`.
+    /// `ActivityPipeline.receive(_:)`. Calling it again while running first
+    /// gives the previous sink a final boundary, as `stop()` would, so it
+    /// keeps nothing open; the new sink then gets a fresh snapshot.
     public func startSignals(_ sink: @escaping @MainActor (ActivitySignal) -> Void) {
+        if isActive, !captureState.isPaused, let previous = self.sink {
+            previous(.boundary(ActivityBoundary(timestamp: clock.now())))
+        }
         self.sink = sink
         updateTrust()
         if !isActive {

@@ -10,23 +10,57 @@ private final class RecordingWriter: ActivityRecordWriter, @unchecked Sendable {
     func write(_ commands: [ActivityRecordCommand]) { lock.withLock { written += commands } }
 }
 
-/// Repository whose session calls fail.
-private final class FailingSessionRepository: ActivityRepository, @unchecked Sendable {
+/// In-memory repository whose calls can be made to fail.
+private final class FlakyRepository: ActivityRepository, @unchecked Sendable {
     struct Failure: Error {}
     private let lock = NSLock()
     private var stored: [ActivityEvent] = []
+    private var storedSessions: [ActivitySession] = []
+    private let failStart: Bool
+    private var insertFailures: Int
+    private var endFailures: Int
+
+    /// `insertFailures` / `endFailures`: how many of those calls fail before they succeed.
+    init(failStart: Bool = false, insertFailures: Int = 0, endFailures: Int = 0) {
+        self.failStart = failStart
+        self.insertFailures = insertFailures
+        self.endFailures = endFailures
+    }
+
     var events: [ActivityEvent] { lock.withLock { stored } }
+    var allSessions: [ActivitySession] { lock.withLock { storedSessions } }
 
     func insert(_ event: FilteredEvent) throws -> ActivityEvent {
-        lock.withLock {
+        try lock.withLock {
+            if insertFailures > 0 {
+                insertFailures -= 1
+                throw Failure()
+            }
             stored.append(ActivityEvent(event, id: Int64(stored.count + 1)))
             return stored[stored.count - 1]
         }
     }
     func events(overlapping interval: DateInterval) throws -> [ActivityEvent] { events }
-    func startSession(at date: Date) throws -> ActivitySession { throw Failure() }
-    func endSession(id: Int64, at date: Date) throws { throw Failure() }
-    func sessions(overlapping interval: DateInterval) throws -> [ActivitySession] { [] }
+    func startSession(at date: Date) throws -> ActivitySession {
+        try lock.withLock {
+            if failStart { throw Failure() }
+            storedSessions.append(ActivitySession(id: Int64(storedSessions.count + 1), startedAt: date))
+            return storedSessions[storedSessions.count - 1]
+        }
+    }
+    func endSession(id: Int64, at date: Date) throws {
+        try lock.withLock {
+            if endFailures > 0 {
+                endFailures -= 1
+                throw Failure()
+            }
+            guard let index = storedSessions.firstIndex(where: { $0.id == id }) else {
+                throw StorageError.sessionNotFound(id)
+            }
+            storedSessions[index].endedAt = date
+        }
+    }
+    func sessions(overlapping interval: DateInterval) throws -> [ActivitySession] { allSessions }
     func deleteEvents(endedBefore cutoff: Date) throws -> Int { 0 }
     func deleteSessions(endedBefore cutoff: Date) throws -> Int { 0 }
 }
@@ -170,7 +204,7 @@ struct ActivityPipelineTests {
 
     @Test("the writer stores events without a session when sessions cannot be written")
     func sessionFailure() {
-        let repository = FailingSessionRepository()
+        let repository = FlakyRepository(failStart: true)
         let errors = ErrorCounter()
         let writer = RepositoryRecordWriter(repository: repository) { _ in errors.increment() }
         let rig = Rig(trust: .trusted, writer: writer)
@@ -182,5 +216,93 @@ struct ActivityPipelineTests {
         #expect(repository.events.map(\.kind) == [.app, .idle])
         #expect(repository.events.map(\.sessionID) == [nil, nil])
         #expect(errors.failures == 1) // the start; the end is skipped without a session id
+    }
+
+    @Test("a failed insert is reported and later commands still apply")
+    func insertFailure() {
+        let repository = FlakyRepository(insertFailures: 1)
+        let errors = ErrorCounter()
+        let writer = RepositoryRecordWriter(repository: repository) { _ in errors.increment() }
+        let rig = Rig(trust: .trusted, writer: writer)
+        rig.advance(10)
+        rig.source.activate(editor, title: "notes.txt") // the Files span 0-10 fails to insert
+        rig.advance(10)
+        rig.pipeline.finish(at: rig.clock.now())
+        writer.waitUntilIdle()
+        #expect(errors.failures == 1)
+        #expect(repository.events.map(\.appBundleID) == ["com.example.editor"])
+        #expect(repository.events.map(\.sessionID) == [1])
+        #expect(repository.allSessions.map(\.endedAt) == [Date(timeIntervalSinceReferenceDate: 20)])
+    }
+
+    @Test("a failed session close is kept and retried with the next commands, and reported once")
+    func endSessionFailure() {
+        let repository = FlakyRepository(endFailures: 2)
+        let errors = ErrorCounter()
+        let writer = RepositoryRecordWriter(repository: repository) { _ in errors.increment() }
+        let rig = Rig(trust: .trusted, writer: writer)
+        let time = Date.init(timeIntervalSinceReferenceDate:)
+        rig.advance(10)
+        rig.store.pause() // closing session 1 fails
+        rig.advance(10)
+        rig.store.resume()
+        rig.advance(10)
+        rig.store.pause() // the retry of 1 fails again (not reported); closing session 2 succeeds
+        writer.waitUntilIdle()
+        #expect(errors.failures == 1)
+        #expect(repository.allSessions.map(\.endedAt) == [nil, time(30)])
+        // The open row and its events' session ID are what a repair on launch needs.
+        #expect(repository.events.map(\.sessionID) == [1, 2])
+        rig.advance(10)
+        rig.store.resume()
+        rig.advance(10)
+        rig.coordinator.stop() // the retry now succeeds
+        writer.waitUntilIdle()
+        #expect(repository.allSessions.map(\.endedAt) == [time(10), time(30), time(50)])
+        #expect(errors.failures == 1)
+    }
+
+    @Test("idle reported after a pause, a stop or an excluded app stores nothing",
+          arguments: ["pause", "stop", "excluded"])
+    func idleAfterBoundary(_ boundary: String) {
+        let writer = RecordingWriter()
+        let rig = Rig(trust: .trusted, writer: writer)
+        rig.advance(10)
+        switch boundary {
+        case "pause": rig.store.pause()
+        case "stop": rig.coordinator.stop()
+        default: rig.source.activate(vault, title: "\(sentinel) Vault")
+        }
+        rig.advance(5)
+        rig.pipeline.idleStarted(at: rig.clock.now())
+        rig.advance(100)
+        if boundary == "pause" { rig.store.resume() }
+        if boundary == "excluded" { rig.source.activate(finder, title: "Downloads") }
+        rig.pipeline.idleEnded(at: rig.clock.now())
+        rig.pipeline.finish(at: rig.clock.now())
+        let inserted = writer.commands.compactMap { command -> FilteredEvent? in
+            if case let .insert(event) = command { return event }
+            return nil
+        }
+        #expect(inserted.map(\.kind) == [.app])
+        #expect(inserted.map { [seconds($0.startedAt), seconds($0.endedAt)] } == [[0, 10]])
+    }
+
+    @Test("replacing the sink while running gives the previous sink a final boundary")
+    func replacedSink() {
+        let first = RecordingWriter()
+        let rig = Rig(trust: .trusted, writer: first)
+        let second = RecordingWriter()
+        let replacement = ActivityPipeline(
+            filter: rig.filter, writer: second, source: "test", calendar: AggregationFixture.utc
+        )
+        rig.advance(10)
+        rig.coordinator.startSignals(replacement.receive)
+        #expect(!rig.pipeline.hasPendingActivity)
+        #expect(first.commands.count == 3) // start, the Files span 0-10, end
+        #expect(replacement.hasPendingActivity)
+        rig.advance(5)
+        rig.coordinator.stop()
+        #expect(second.commands.count == 3)
     }
 }
