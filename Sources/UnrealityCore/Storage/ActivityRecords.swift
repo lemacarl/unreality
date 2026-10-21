@@ -11,9 +11,13 @@ public enum ActivityEventKind: String, Codable, Sendable, CaseIterable {
     case idle
 }
 
-/// One span of recorded activity. Stored in the `events` table.
+/// One span of recorded activity, as read from the `events` table.
 ///
-/// Dates are stored as UTC text with millisecond precision.
+/// Dates are stored as UTC text with millisecond precision. This is the read
+/// model: it cannot be inserted. Storage accepts only a ``FilteredEvent``
+/// (``ActivityRepository/insert(_:)``), which only ``PrivacyFilter`` creates.
+/// `description`, `debugDescription` and `dump` redact the window title and
+/// URL.
 public struct ActivityEvent: Codable, Sendable, Equatable, Identifiable {
     /// Row id; `nil` until inserted.
     public var id: Int64?
@@ -21,7 +25,7 @@ public struct ActivityEvent: Codable, Sendable, Equatable, Identifiable {
     /// Frontmost app's bundle identifier; `nil` for idle spans.
     public var appBundleID: String?
     public var windowTitle: String?
-    /// Browser URL, already redacted by the privacy filter; `nil` when not web.
+    /// Browser URL, redacted by the privacy filter; `nil` when not web.
     public var url: String?
     public var startedAt: Date
     /// Must not be earlier than `startedAt` (enforced by the schema).
@@ -53,6 +57,22 @@ public struct ActivityEvent: Codable, Sendable, Equatable, Identifiable {
         self.sessionID = sessionID
     }
 
+    /// The stored form of `filtered`, with row id `id`. For repository
+    /// implementations (including fakes) returning an inserted event.
+    public init(_ filtered: FilteredEvent, id: Int64?) {
+        self.init(
+            id: id,
+            kind: filtered.kind,
+            appBundleID: filtered.appBundleID,
+            windowTitle: filtered.windowTitle,
+            url: filtered.url,
+            startedAt: filtered.startedAt,
+            endedAt: filtered.endedAt,
+            source: filtered.source,
+            sessionID: filtered.sessionID
+        )
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, kind, url, source
         case appBundleID = "app_bundle_id", windowTitle = "window_title"
@@ -79,9 +99,37 @@ public struct ActivitySession: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-extension ActivityEvent: FetchableRecord, MutablePersistableRecord {
+// Read-only record: deliberately not `PersistableRecord`, so the only write
+// path is `EventInsertRecord`, built from a `FilteredEvent`.
+extension ActivityEvent: FetchableRecord, TableRecord {
     public static let databaseTableName = "events"
-    public mutating func didInsert(_ inserted: InsertionSuccess) { id = inserted.rowID }
+}
+
+/// The row written for a `FilteredEvent`. Internal; the repository's insert
+/// is its only user.
+struct EventInsertRecord: Encodable, MutablePersistableRecord {
+    static let databaseTableName = ActivityEvent.databaseTableName
+    typealias CodingKeys = ActivityEvent.CodingKeys
+
+    var id: Int64?
+    let event: FilteredEvent
+
+    init(_ event: FilteredEvent) { self.event = event }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(event.kind, forKey: .kind)
+        try container.encode(event.appBundleID, forKey: .appBundleID)
+        try container.encode(event.windowTitle, forKey: .windowTitle)
+        try container.encode(event.url, forKey: .url)
+        try container.encode(event.startedAt, forKey: .startedAt)
+        try container.encode(event.endedAt, forKey: .endedAt)
+        try container.encode(event.source, forKey: .source)
+        try container.encode(event.sessionID, forKey: .sessionID)
+    }
+
+    mutating func didInsert(_ inserted: InsertionSuccess) { id = inserted.rowID }
 }
 
 extension ActivitySession: FetchableRecord, MutablePersistableRecord {

@@ -10,9 +10,12 @@ public enum StorageError: Error, Equatable {
 /// Reads and writes recorded activity. Calls are synchronous and thread-safe;
 /// call them off the main actor.
 public protocol ActivityRepository: Sendable {
-    /// Inserts `event` and returns it with its new `id`.
+    /// Inserts `event` and returns the stored event with its new `id`.
+    ///
+    /// Takes only a ``FilteredEvent``, which only ``PrivacyFilter`` creates,
+    /// so excluded or unredacted activity cannot be stored by construction.
     @discardableResult
-    func insert(_ event: ActivityEvent) throws -> ActivityEvent
+    func insert(_ event: FilteredEvent) throws -> ActivityEvent
 
     /// Events overlapping `interval` (half-open: `startedAt < end` and
     /// `endedAt > start`), oldest first. A zero-length event at exactly
@@ -58,8 +61,9 @@ struct GRDBActivityRepository: ActivityRepository {
         static let endedAt = Column("ended_at")
     }
 
-    func insert(_ event: ActivityEvent) throws -> ActivityEvent {
-        try writer.write { database in try event.inserted(database) }
+    func insert(_ event: FilteredEvent) throws -> ActivityEvent {
+        let record = try writer.write { database in try EventInsertRecord(event).inserted(database) }
+        return ActivityEvent(event, id: record.id)
     }
 
     func events(overlapping interval: DateInterval) throws -> [ActivityEvent] {
