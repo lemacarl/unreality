@@ -35,10 +35,13 @@ struct RedactableURL: CustomStringConvertible, CustomDebugStringConvertible, Cus
     ]
     /// Internal pages that show saved passwords, passkeys, payment methods,
     /// addresses or wallets (`chrome://password-manager`, `edge://wallet`,
-    /// `chrome://settings/passwords`, `chrome://settings/payments`, ...) and
+    /// `chrome://settings/passwords`, `chrome://settings/payments`, Edge's
+    /// `edge://settings/personalinfo`, ...) and
     /// Firefox's `about:logins`. Dropped like extension pages.
     static let sensitiveInternalHosts: Set<String> = ["password-manager", "wallet", "passwords"]
-    static let sensitiveSettingsPathWords = ["password", "passkey", "autofill", "payment", "address", "wallet"]
+    static let sensitiveSettingsPathWords = [
+        "password", "passkey", "autofill", "payment", "address", "wallet", "personalinfo"
+    ]
     static let sensitiveAboutPages: Set<String> = ["logins", "loginsimportreport"]
 
     /// Lowercased scheme of the outermost URL, for example `https` or `blob`.

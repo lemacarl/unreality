@@ -22,7 +22,11 @@ struct KnownBrowserTests {
         ("org.mozilla.firefox", .unsupported),
         ("org.mozilla.firefoxdeveloperedition", .unsupported),
         ("com.google.Chrome.app.abcdefghijklmnop", .unsupported),
-        ("com.apple.Safari.WebApp.1234-ABCD", .unsupported)
+        ("com.apple.Safari.WebApp.1234-ABCD", .unsupported),
+        ("org.torproject.torbrowser", .unsupported), ("net.mullvad.mullvadbrowser", .unsupported),
+        ("com.duckduckgo.macos.browser", .unsupported), ("com.operasoftware.OperaGX", .unsupported),
+        ("net.waterfox.waterfox", .unsupported), ("company.thebrowser.dia", .unsupported),
+        ("com.vivaldi.Vivaldi", .unsupported)
     ])
     func matches(_ bundleID: String, _ scripting: KnownBrowser.Scripting) {
         #expect(KnownBrowser.matching(bundleID: bundleID)?.scripting == scripting)
@@ -151,7 +155,8 @@ struct BrowserURLFilterTests {
         "chrome://password-manager/passwords", "CHROME://Password-Manager/", "edge://wallet/passwords",
         "brave://wallet/crypto", "chrome://settings/passwords", "chrome://settings/payments",
         "chrome://settings/addresses", "chrome://settings/autofill", "edge://settings/profiles/passwords",
-        "brave://settings/passkeys", "arc://password-manager", "about:logins", "view-source:chrome://password-manager"
+        "brave://settings/passkeys", "edge://settings/personalinfo", "edge://settings/profiles/personalinfo",
+        "arc://password-manager", "about:logins", "view-source:chrome://password-manager"
     ])
     func internalPasswordPages(_ url: String) {
         #expect(rules.filter(sample(.url(url), app: chrome)) == nil)
@@ -253,6 +258,43 @@ struct BrowserURLCoordinatorTests {
         #expect(delivered.map(\.windowTitle) == ["first", "Docs", "Docs 2"])
         #expect(!delivered.contains { ($0.url ?? "").contains("chase") })
         #expect(rig.provider.urlQueries.count == 3)
+        // The provider gets the focused window's title to match the scripted window against.
+        #expect(rig.provider.urlQueryTitles == ["Docs", "Chase - Accounts", "Docs 2"])
+        // Per-app caches are reset on every activation.
+        #expect(rig.provider.resetCount >= 2)
+    }
+
+    @Test("a reading that only flips to or from a failed read, with the same title, is not a title change")
+    func dedupeIgnoresFailedFlips() {
+        let rig = Rig(readings: ["com.google.Chrome": .url("https://docs.example.com/")])
+        var delivered: [ActivitySample] = []
+        rig.coordinator.start { delivered.append($0) }
+        rig.source.activate(chrome, title: "Docs")
+        rig.provider.readings["com.google.Chrome"] = .unreadable(.failed)
+        rig.source.setTitle("Docs")
+        rig.provider.readings["com.google.Chrome"] = .url("https://docs.example.com/")
+        rig.source.setTitle("Docs")
+        #expect(delivered.map(\.trigger) == [.snapshot, .appActivated])
+        // A different URL with the same title (in-page navigation) is a change.
+        rig.provider.readings["com.google.Chrome"] = .url("https://docs.example.com/other")
+        rig.source.setTitle("Docs")
+        // So is a change to a definite reason, such as a private window.
+        rig.provider.readings["com.google.Chrome"] = .unreadable(.privateWindow)
+        rig.source.setTitle("Docs")
+        #expect(delivered.map(\.trigger) == [.snapshot, .appActivated, .titleChanged, .titleChanged])
+        #expect(delivered.last?.windowTitle == nil)
+    }
+
+    @Test("isUnchanged: equal readings, or either side a failed read")
+    func isUnchanged() {
+        let url = BrowserURLReading.url("https://a.example/")
+        #expect(BrowserURLReading.isUnchanged(url, url))
+        #expect(BrowserURLReading.isUnchanged(nil, nil))
+        #expect(BrowserURLReading.isUnchanged(url, .unreadable(.failed)))
+        #expect(BrowserURLReading.isUnchanged(.unreadable(.failed), url))
+        #expect(!BrowserURLReading.isUnchanged(url, .url("https://b.example/")))
+        #expect(!BrowserURLReading.isUnchanged(url, .unreadable(.windowMismatch)))
+        #expect(!BrowserURLReading.isUnchanged(.unreadable(.automationDenied), .unreadable(.privateWindow)))
     }
 
     @Test("excluded apps, untrusted Accessibility and pause never ask for a URL")
@@ -335,7 +377,7 @@ struct FakeBrowserURLProviderTests {
     @Test("reading never changes permission; only an explicit request does")
     func permissionRequest() async {
         let provider = FakeBrowserURLProvider(permissions: ["com.apple.Safari": .notDetermined], userAnswer: .denied)
-        #expect(provider.activeTabURL(of: safari) == .unreadable(.failed))
+        #expect(provider.activeTabURL(of: safari, focusedWindowTitle: "t") == .unreadable(.failed))
         #expect(provider.automationPermission(for: safari) == .notDetermined)
         #expect(provider.permissionRequests.isEmpty)
         #expect(await provider.requestAutomationPermission(for: safari) == .denied)

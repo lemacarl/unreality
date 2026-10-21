@@ -87,7 +87,8 @@ public typealias WindowTitlePolicy = @MainActor (FrontmostApp) -> Bool
 ///   ``BrowserURLProvider``; otherwise `browserURL` is `nil`. A source
 ///   without a provider never reads URLs.
 /// - `.titleChanged` is emitted only when the title, or the browser URL
-///   reading, differs from the last one emitted.
+///   reading, differs from the last one emitted (see
+///   ``BrowserURLReading/isUnchanged(_:_:)``).
 /// - After `stop` nothing is emitted. Calling `start` while started replaces
 ///   the handler and policy and emits a fresh snapshot.
 @MainActor
@@ -137,6 +138,7 @@ public final class FakeActivitySource: ActivitySource {
         handler: @escaping @MainActor (ActivitySample) -> Void
     ) {
         startCount += 1
+        urlProvider?.resetCachedState()
         isRunning = true
         policy = windowTitlePolicy
         self.handler = handler
@@ -144,6 +146,7 @@ public final class FakeActivitySource: ActivitySource {
     }
 
     public func stop() {
+        urlProvider?.resetCachedState()
         isRunning = false
         policy = nil
         handler = nil
@@ -154,6 +157,7 @@ public final class FakeActivitySource: ActivitySource {
     public func activate(_ app: FrontmostApp, title: String? = nil) {
         frontmost = app
         currentTitle = title
+        urlProvider?.resetCachedState()
         emit(.appActivated)
     }
 
@@ -162,8 +166,8 @@ public final class FakeActivitySource: ActivitySource {
     public func setTitle(_ title: String?) {
         currentTitle = title
         guard isRunning, let app = frontmost, allowsTitle(for: app) else { return }
-        let url = browserURL(for: app)
-        if let lastEmitted, lastEmitted.title == title, lastEmitted.url == url { return }
+        let url = browserURL(for: app, title: title)
+        if let lastEmitted, lastEmitted.title == title, BrowserURLReading.isUnchanged(lastEmitted.url, url) { return }
         send(.titleChanged, app: app, title: title, url: url)
     }
 
@@ -173,15 +177,15 @@ public final class FakeActivitySource: ActivitySource {
         return policy(app)
     }
 
-    private func browserURL(for app: FrontmostApp) -> BrowserURLReading? {
+    private func browserURL(for app: FrontmostApp, title: String?) -> BrowserURLReading? {
         guard let urlProvider, KnownBrowser.isBrowser(app) else { return nil }
-        return urlProvider.activeTabURL(of: app)
+        return urlProvider.activeTabURL(of: app, focusedWindowTitle: title)
     }
 
     private func emit(_ trigger: ActivitySample.Trigger) {
         guard isRunning, let app = frontmost else { return }
         if allowsTitle(for: app) {
-            send(trigger, app: app, title: currentTitle, url: browserURL(for: app))
+            send(trigger, app: app, title: currentTitle, url: browserURL(for: app, title: currentTitle))
         } else {
             send(trigger, app: app, title: nil, url: nil)
         }

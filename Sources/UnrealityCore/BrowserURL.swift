@@ -65,9 +65,13 @@ public struct KnownBrowser: Sendable, Hashable {
         KnownBrowser(name: "Firefox", scripting: .unsupported, bundleIDs: [
             "org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition", "org.mozilla.nightly"
         ]),
+        // Not supported yet: no verified scripting support. Their titles
+        // are dropped. Bundle IDs other than Firefox's are unverified.
         KnownBrowser(name: "Other browsers", scripting: .unsupported, bundleIDs: [
-            "app.zen-browser.zen", "org.mozilla.librewolf", "com.vivaldi.Vivaldi", "com.operasoftware.Opera",
-            "com.kagi.kagimacOS"
+            "org.torproject.torbrowser", "net.mullvad.mullvadbrowser", "com.duckduckgo.macos.browser",
+            "net.waterfox.waterfox", "app.zen-browser.zen", "org.mozilla.librewolf",
+            "com.operasoftware.Opera", "com.operasoftware.OperaGX", "com.vivaldi.Vivaldi",
+            "company.thebrowser.dia", "com.kagi.kagimacOS"
         ]),
         // Installed web apps show one site in their own window; their URL
         // cannot be read, so their titles are dropped.
@@ -94,6 +98,16 @@ public enum BrowserURLReading: Sendable, Equatable {
         if case let .url(url) = self { return url }
         return nil
     }
+
+    /// Whether a source should treat `new` as no change from `old` when the
+    /// window title is also unchanged, so it emits no `.titleChanged`
+    /// sample: equal readings, or either one is `.unreadable(.failed)` (an
+    /// intermittent failure, such as a timeout, is not a new observation).
+    /// The sample already emitted stays in force: an earlier URL was already
+    /// checked, and an earlier failure already dropped the title.
+    public static func isUnchanged(_ old: BrowserURLReading?, _ new: BrowserURLReading?) -> Bool {
+        old == new || old == .unreadable(.failed) || new == .unreadable(.failed)
+    }
 }
 
 /// Why a known browser's URL could not be read. Carries no captured data.
@@ -107,8 +121,13 @@ public enum BrowserURLUnavailability: String, Sendable, CaseIterable {
     case unsupportedBrowser
     /// The front window is a private (incognito) window.
     case privateWindow
-    /// No window or tab to read.
+    /// No window or tab to read (or the front window is not a browser
+    /// window, such as Safari's Settings window).
     case noWindow
+    /// The browser's front window is not provably the focused window whose
+    /// title was read (its name differs, or there was no title), so the
+    /// title and URL could belong to different windows.
+    case windowMismatch
     /// The read failed (timeout, unexpected reply, the browser quit).
     case failed
 }
@@ -139,12 +158,21 @@ public enum BrowserAutomationPermission: String, Sendable, CaseIterable {
 ///   `.unreadable(.automationNotDetermined)` or `.unreadable(.automationDenied)`.
 /// - Private windows return `.unreadable(.privateWindow)` where the browser
 ///   says so (Chrome family); a URL is never read from them.
+/// - A URL is returned only from the window whose name equals
+///   `focusedWindowTitle` (the focused window's Accessibility title);
+///   otherwise `.unreadable(.windowMismatch)`.
 /// - The URL returned is the browser's own, normalised string.
+/// - Sources call ``resetCachedState()`` on every app activation and on
+///   stop, so per-process caches (a granted permission, an unresponsive
+///   browser) last at most until the frontmost app changes.
 @MainActor
 public protocol BrowserURLProvider: AnyObject {
-    /// The active tab URL of `app`'s front window. Synchronous, with a short
-    /// timeout; never prompts.
-    func activeTabURL(of app: FrontmostApp) -> BrowserURLReading
+    /// The active tab URL of `app`'s front window, if that window's name is
+    /// `focusedWindowTitle`. Synchronous, with short timeouts; never prompts.
+    func activeTabURL(of app: FrontmostApp, focusedWindowTitle: String?) -> BrowserURLReading
+
+    /// Forgets per-process state (cached permission, unresponsive marks).
+    func resetCachedState()
 
     /// The Automation permission state for `app`, without prompting.
     func automationPermission(for app: FrontmostApp) -> BrowserAutomationPermission
@@ -168,8 +196,12 @@ public final class FakeBrowserURLProvider: BrowserURLProvider {
     public var userAnswer: BrowserAutomationPermission
     /// Apps whose URL was read, in order.
     public private(set) var urlQueries: [FrontmostApp] = []
+    /// The focused-window titles passed with those reads, in order.
+    public private(set) var urlQueryTitles: [String?] = []
     /// Apps for which permission was requested (a prompt), in order.
     public private(set) var permissionRequests: [FrontmostApp] = []
+    /// How many times `resetCachedState()` was called.
+    public private(set) var resetCount = 0
 
     public init(
         readings: [String: BrowserURLReading] = [:],
@@ -183,9 +215,14 @@ public final class FakeBrowserURLProvider: BrowserURLProvider {
         self.userAnswer = userAnswer
     }
 
-    public func activeTabURL(of app: FrontmostApp) -> BrowserURLReading {
+    public func activeTabURL(of app: FrontmostApp, focusedWindowTitle: String?) -> BrowserURLReading {
         urlQueries.append(app)
+        urlQueryTitles.append(focusedWindowTitle)
         return app.bundleID.flatMap { readings[$0] } ?? defaultReading
+    }
+
+    public func resetCachedState() {
+        resetCount += 1
     }
 
     public func automationPermission(for app: FrontmostApp) -> BrowserAutomationPermission {

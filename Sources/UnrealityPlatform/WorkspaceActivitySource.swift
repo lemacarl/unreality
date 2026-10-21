@@ -102,6 +102,7 @@ public final class WorkspaceActivitySource: ActivitySource {
         if let activationObserver { notificationCenter.removeObserver(activationObserver) }
         activationObserver = nil
         stopTracking()
+        browserURLProvider?.resetCachedState()
         isRunning = false
         policy = nil
         handler = nil
@@ -116,6 +117,7 @@ public final class WorkspaceActivitySource: ActivitySource {
     private func activated(_ app: FrontmostApp?, trigger: ActivitySample.Trigger) {
         guard isRunning, let app else { return }
         stopTracking()
+        browserURLProvider?.resetCachedState()
         frontmost = app
         var title: String?
         var url: BrowserURLReading?
@@ -124,7 +126,7 @@ public final class WorkspaceActivitySource: ActivitySource {
         if app.processID != Self.ownProcessID, policy?(app) == true {
             startTracking(app)
             title = focusedWindowTitle()
-            url = browserURL(of: app)
+            url = browserURL(of: app, title: title)
         }
         emit(trigger, app: app, title: title, url: url)
     }
@@ -141,15 +143,17 @@ public final class WorkspaceActivitySource: ActivitySource {
         tracking?.unresponsive = false
         if notification == kAXFocusedWindowChangedNotification { watchFocusedWindow() }
         let title = focusedWindowTitle()
-        let url = browserURL(of: app)
-        if let lastEmitted, lastEmitted.title == title, lastEmitted.url == url { return }
+        let url = browserURL(of: app, title: title)
+        if let lastEmitted, lastEmitted.title == title, BrowserURLReading.isUnchanged(lastEmitted.url, url) { return }
         emit(.titleChanged, app: app, title: title, url: url)
     }
 
-    /// Only called after the policy allowed `app`'s title.
-    private func browserURL(of app: FrontmostApp) -> BrowserURLReading? {
+    /// Only called after the policy allowed `app`'s title. An app that did
+    /// not answer Accessibility in time is not sent Apple Events either.
+    private func browserURL(of app: FrontmostApp, title: String?) -> BrowserURLReading? {
         guard let browserURLProvider, KnownBrowser.isBrowser(app) else { return nil }
-        return browserURLProvider.activeTabURL(of: app)
+        if tracking?.unresponsive == true { return .unreadable(.failed) }
+        return browserURLProvider.activeTabURL(of: app, focusedWindowTitle: title)
     }
 
     private func emit(_ trigger: ActivitySample.Trigger, app: FrontmostApp, title: String?, url: BrowserURLReading?) {
