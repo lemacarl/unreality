@@ -24,8 +24,10 @@ public protocol ActivitySampleFilter: AnyObject {
 ///   `accessibilityTrust`; without it, samples are app-only (title `nil`)
 ///   and title-change samples are dropped. The coordinator never prompts.
 /// - Titles are never read for a process without a bundle ID (no filter
-///   could match it) or for Unreality's own process.
-/// - The filter decides which titles may be read and which samples pass.
+///   could match it) or for Unreality's own process. Wherever a title is
+///   withheld, so is the browser URL reading (#19).
+/// - The filter decides which titles may be read and which samples pass
+///   (for browsers: the site check and URL redaction, #19).
 ///   It is a required parameter with deliberately no pass-through default,
 ///   so nothing can wire the coordinator unfiltered.
 @MainActor
@@ -131,6 +133,7 @@ public final class ActivityCoordinator {
         if !mayReadTitle(of: sample.app) {
             if sample.trigger == .titleChanged { return }
             sample.windowTitle = nil
+            sample.browserURL = nil
         }
         guard let filtered = filter.filter(sample) else { return }
         sink(filtered)

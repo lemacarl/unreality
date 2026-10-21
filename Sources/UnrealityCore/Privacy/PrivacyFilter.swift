@@ -41,14 +41,19 @@ public enum PrivacyDropReason: Error, Sendable, Equatable, CaseIterable {
     /// The URL's host is on the blocklist.
     case excludedSite
     /// A URL was present but could not be parsed, or had no host to check
-    /// (other than `about:` and `data:`), so the site could not be checked
-    /// (fails closed). Wrapped URLs (`blob:`, `view-source:`,
+    /// (other than `about:` and `data:`), or had a `\` before its query or
+    /// fragment (parsers disagree on its host), so the site could not be
+    /// checked (fails closed). Wrapped URLs (`blob:`, `view-source:`,
     /// `filesystem:`) are checked by their inner URL.
     case uncheckableURL
     /// A browser-extension page (`chrome-extension://`,
     /// `safari-web-extension://`, ...), for example a password manager's
     /// vault opened in a tab.
     case excludedExtensionPage
+    /// A browser-internal page that shows saved passwords, passkeys,
+    /// payment methods, addresses or a wallet (`chrome://password-manager`,
+    /// `edge://wallet`, `chrome://settings/payments`, `about:logins`).
+    case excludedBrowserPage
 }
 
 /// Outcome of ``PrivacyRules/evaluate(_:until:url:source:sessionID:)``.
@@ -81,47 +86,81 @@ public struct PrivacyRules: Sendable, Equatable {
         app.bundleID != nil && !isExcluded(app)
     }
 
-    /// `sample`, or `nil` when it comes from an excluded app (including
-    /// app-only samples without a title). A sample from an app without a
-    /// bundle ID is kept without its title (fails closed on an unknown app).
+    /// `sample` as it may be passed on, or `nil` when it must be dropped:
+    ///
+    /// - From an excluded app (including app-only samples without a title):
+    ///   dropped.
+    /// - From an app without a bundle ID: kept without title or URL (fails
+    ///   closed on an unknown app).
+    /// - With a browser URL (#19): dropped when the site is excluded, the
+    ///   page is a browser-extension or browser-internal password, payment
+    ///   or wallet page, or the URL cannot be checked. Otherwise the URL is
+    ///   replaced by its redacted form (query, fragment, credentials and `;`
+    ///   parameters dropped), and the title is dropped for `about:` and
+    ///   `data:` pages, whose title may come from the page that opened them.
+    /// - From a ``KnownBrowser`` without a readable URL (`.unreadable`, or
+    ///   no reading at all): kept without its title, since the site behind
+    ///   the title could not be checked.
+    ///
+    /// Filtering a filtered sample again gives the same sample.
     public func filter(_ sample: ActivitySample) -> ActivitySample? {
-        if isExcluded(sample.app) { return nil }
-        guard sample.app.bundleID == nil, sample.windowTitle != nil else { return sample }
-        var appOnly = sample
-        appOnly.windowTitle = nil
-        return appOnly
+        if case let .success(filtered) = screen(sample) { return filtered }
+        return nil
     }
 
     /// The event to store for the activity `sample` started, lasting until
     /// `end`, or why it must be dropped. Applies ``filter(_:)`` again, so an
-    /// unfiltered sample cannot slip through.
+    /// unfiltered sample cannot slip through. The event is a `.web` event
+    /// when the filtered sample has a URL, otherwise `.app`.
     /// - Parameters:
-    ///   - url: the browser URL for the span, as reported (unredacted);
-    ///     given a URL, the event is a `.web` event, otherwise `.app`.
+    ///   - url: overrides the sample's `browserURL` with this URL as the
+    ///     browser reported it (unredacted); `nil` uses the sample's own.
     ///   - source: the capture source, for example `workspace`.
     public func evaluate(
         _ sample: ActivitySample, until end: Date, url: String? = nil, source: String, sessionID: Int64? = nil
     ) -> PrivacyDecision {
-        guard let sample = filter(sample) else { return .drop(.excludedApp) }
-        var redactedURL: String?
-        if let url {
-            switch RedactableURL.parse(url) {
-            case let .failure(reason):
-                return .drop(reason)
-            case let .success(parsed):
-                if let host = parsed.host, blocklist.excludes(host: host) { return .drop(.excludedSite) }
-                redactedURL = parsed.redacted(urlRedaction)
-            }
+        var sample = sample
+        if let url { sample.browserURL = .url(url) }
+        switch screen(sample) {
+        case let .failure(reason):
+            return .drop(reason)
+        case let .success(sample):
+            return .keep(FilteredEvent(
+                kind: sample.url == nil ? .app : .web,
+                appBundleID: sample.app.bundleID,
+                windowTitle: sample.windowTitle,
+                url: sample.url,
+                span: (sample.timestamp, end),
+                source: source,
+                sessionID: sessionID
+            ))
         }
-        return .keep(FilteredEvent(
-            kind: redactedURL == nil ? .app : .web,
-            appBundleID: sample.app.bundleID,
-            windowTitle: sample.windowTitle,
-            url: redactedURL,
-            span: (sample.timestamp, end),
-            source: source,
-            sessionID: sessionID
-        ))
+    }
+
+    private func screen(_ sample: ActivitySample) -> Result<ActivitySample, PrivacyDropReason> {
+        if isExcluded(sample.app) { return .failure(.excludedApp) }
+        var sample = sample
+        guard sample.app.bundleID != nil else {
+            sample.windowTitle = nil
+            sample.browserURL = nil
+            return .success(sample)
+        }
+        switch sample.browserURL {
+        case let .url(raw)?:
+            switch RedactableURL.parse(raw) {
+            case let .failure(reason):
+                return .failure(reason)
+            case let .success(parsed):
+                if let host = parsed.host, blocklist.excludes(host: host) { return .failure(.excludedSite) }
+                sample.browserURL = .url(parsed.redacted(urlRedaction))
+                if !parsed.keepsTitle { sample.windowTitle = nil }
+            }
+        case .unreadable?:
+            sample.windowTitle = nil
+        case nil:
+            if KnownBrowser.isBrowser(sample.app) { sample.windowTitle = nil }
+        }
+        return .success(sample)
     }
 
     /// Like ``evaluate(_:until:url:source:sessionID:)``, returning `nil`
@@ -245,9 +284,27 @@ extension ActivityEvent: RedactedActivityDescription, CustomStringConvertible, C
 extension ActivitySample: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public var description: String {
         let app = app.bundleID ?? "nil"
+        let browserURL: String
+        switch self.browserURL {
+        case nil: browserURL = "nil"
+        case .url?: browserURL = "<redacted>"
+        case let .unreadable(reason)?: browserURL = "unreadable(\(reason.rawValue))"
+        }
         return "ActivitySample(trigger: \(trigger.rawValue), app: \(app), "
-            + "title: \(ActivityRedaction.redacted(windowTitle)), at: \(timestamp.timeIntervalSince1970))"
+            + "title: \(ActivityRedaction.redacted(windowTitle)), url: \(browserURL), "
+            + "at: \(timestamp.timeIntervalSince1970))"
     }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [], displayStyle: .struct) }
+}
+
+extension BrowserURLReading: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public var description: String {
+        switch self {
+        case .url: "BrowserURLReading.url(<redacted>)"
+        case let .unreadable(reason): "BrowserURLReading.unreadable(\(reason.rawValue))"
+        }
+    }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror { Mirror(self, children: [], displayStyle: .enum) }
 }
