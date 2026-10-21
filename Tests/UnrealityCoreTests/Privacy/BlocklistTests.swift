@@ -45,7 +45,8 @@ struct BlocklistTests {
     @Test("empty, whitespace and invalid entries are ignored")
     func emptyEntries() {
         let list = Blocklist(bundleIDPatterns: ["", "  ", ".*", "*", "com.*.app", "*.example", "com.ex*.*"],
-                             domains: ["", " ", "*.", "https://", "exa mple.com", "[::1"])
+                             domains: ["", " ", "*.", "https://", "exa mple.com", "[::1", "*", "com.*", "a.*.b",
+                                       "*.com", "com", "localhost", ".com", "ch%zzse.com", "ch%2Fase.com"])
         #expect(list == .empty)
         #expect(!list.excludes(bundleID: ""))
         #expect(!list.excludes(bundleID: "*"))
@@ -59,6 +60,27 @@ struct BlocklistTests {
         #expect(list.excludes(host: "[::1]"))
         #expect(list.excludes(host: "::1"))
         #expect(!list.excludes(host: "[::2]"))
+    }
+
+    @Test("percent-encoded entries and hosts are decoded", arguments: [
+        "%63hase.com", "ch%61se.com", "%43HASE.COM", "chase%2Ecom"
+    ])
+    func percentEncoded(_ value: String) {
+        #expect(Blocklist(domains: [value]).domains == ["chase.com"])
+        #expect(Blocklist(domains: ["chase.com"]).excludes(host: value))
+    }
+
+    @Test("hosts that are not valid fail closed", arguments: [
+        "chase.com:443", "example.com:80", "ch%zzse.com", "ch%2Fase.com", "a@b.com", "exa mple.com", "ch%00ase.com"
+    ])
+    func invalidHostsFailClosed(_ host: String) {
+        #expect(Blocklist.empty.excludes(host: host))
+    }
+
+    @Test("an IPv6 host with a zone ID is accepted as is")
+    func zoneID() {
+        #expect(!Blocklist(domains: ["example.com"]).excludes(host: "[fe80::1%25en0]"))
+        #expect(!Blocklist.empty.excludes(host: ""))
     }
 
     @Test("IDN entries and hosts compare in punycode form")
@@ -107,6 +129,7 @@ struct BlocklistTests {
             bundleIDPatterns: DefaultExclusions.passwordManagerApps + DefaultExclusions.messagingApps
                 + DefaultExclusions.mailApps,
             domains: DefaultExclusions.passwordManagerSites + DefaultExclusions.messagingSites
+                + DefaultExclusions.mailSites
                 + DefaultExclusions.bankingSites
         )
         #expect(Blocklist.defaults == expected)
@@ -140,5 +163,11 @@ struct BlocklistTests {
     func mailDefaults() {
         #expect(Blocklist.defaults.excludes(bundleID: "com.apple.mail"))
         #expect(Blocklist.defaults.excludes(bundleID: "com.microsoft.Outlook"))
+        for host in ["mail.google.com", "outlook.live.com", "outlook.office365.com", "mail.proton.me"] {
+            #expect(Blocklist.defaults.excludes(host: host), "\(host)")
+        }
+        for id in ["com.hnc.Discord", "com.hnc.DiscordPTB", "com.hnc.DiscordCanary"] {
+            #expect(Blocklist.defaults.excludes(bundleID: id), "\(id)")
+        }
     }
 }

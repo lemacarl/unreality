@@ -75,7 +75,9 @@ struct PrivacyRulesTests {
 
     @Test("excluded sites are dropped, including subdomains", arguments: [
         "https://www.paypal.com/myaccount", "https://my.1password.com/", "http://WEB.WHATSAPP.COM/#chat",
-        "https://user:pw@secure.chase.com/login?x=1"
+        "https://user:pw@secure.chase.com/login?x=1",
+        "https://ch%61se.com/x?q=1", "https://%63hase.com/", "https://%43HASE.COM/", "https://chase%2Ecom/",
+        "blob:https://ch%61se.com/1"
     ])
     func dropsExcludedSite(_ url: String) {
         #expect(web(url) == .drop(.excludedSite))
@@ -134,7 +136,8 @@ struct PrivacyRulesTests {
         "not a url", "", "https://", "https:///path", "//example.com/no-scheme", "example.com",
         "https:chase.com", "file:///Users/someone/Documents/plan.pdf", "javascript:alert(1)",
         "mailto:someone@example.com", "blob:", "blob:not a url", "view-source:", "blob:file:///x",
-        "blob:view-source:blob:https://example.com/1"
+        "blob:view-source:blob:https://example.com/1",
+        "https://ch%zzse.com/", "https://ch%2Fase.com/", "data://ch%zz.example/", "ftp://ex%00ample.com/"
     ])
     func uncheckableURL(_ raw: String) {
         #expect(web(raw) == .drop(.uncheckableURL))
@@ -162,6 +165,8 @@ struct PrivacyRulesTests {
         "chrome-extension://aeblfdkhhhdcdjpifhhbdiojplfjncoa/home.html#/vault",
         "safari-web-extension://4A1B2C3D-0000-0000-0000-000000000000/popup.html",
         "safari-extension://com.example.ext/page.html", "moz-extension://abc/index.html",
+        "extension://abc/vault.html", "edge-extension://abc/x", "opera-extension://abc/x",
+        "ms-browser-extension://abc/x", "EXTENSION://abc/x",
         "blob:chrome-extension://abc/1"
     ])
     func extensionPages(_ raw: String) {

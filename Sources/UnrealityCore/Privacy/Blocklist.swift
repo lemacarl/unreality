@@ -12,9 +12,13 @@ import Foundation
 ///   A leading `*.` or `.`, a scheme, user info, a port and a path are
 ///   ignored, so `https://www.example.com/login` is the entry
 ///   `www.example.com`. Entries and hosts are compared in one canonical
-///   form: lowercase ASCII (internationalised names as punycode, so
-///   `bücher.de` and `xn--bcher-kva.de` are the same entry) without a
-///   trailing dot, and IPv6 addresses in brackets (`[::1]`).
+///   form: percent escapes decoded, lowercase ASCII (internationalised
+///   names as punycode, so `bücher.de` and `xn--bcher-kva.de` are the same
+///   entry) without a trailing dot, and IPv6 addresses in brackets
+///   (`[::1]`). An entry with a `*` other than a leading `*.`, or with a
+///   single label (`com`, `localhost`, also from `*.com`), is invalid.
+///   IP-literal entries are not normalised further (`[0:0:0:0:0:0:0:1]`
+///   does not match `[::1]`).
 ///
 /// Empty or invalid entries are ignored. The defaults (``defaults``, listed
 /// in docs/PRIVACY.md) are extended with the user's own entries via
@@ -63,9 +67,13 @@ public struct Blocklist: Sendable, Equatable {
         return bundleIDPrefixes.contains { id == $0 || id.hasPrefix($0 + ".") }
     }
 
-    /// Whether activity on `host` (a URL's host, Unicode or punycode) must be dropped.
+    /// Whether activity on `host` must be dropped. `host` is a URL's host
+    /// without a port (Unicode, punycode or percent-encoded). A non-empty
+    /// host that is not a valid host (for example one with a port) is
+    /// treated as excluded: fail closed.
     public func excludes(host: String) -> Bool {
-        guard let host = Self.canonicalHost(host) else { return false }
+        if host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+        guard let host = Self.canonicalHost(host) else { return true }
         return domains.contains { host == $0 || host.hasSuffix("." + $0) }
     }
 
@@ -75,14 +83,42 @@ public struct Blocklist: Sendable, Equatable {
         self.domains = domains
     }
 
+    /// Code points that can never appear in a decoded host (the WHATWG
+    /// forbidden host code points, plus `*`); `:` is handled separately.
+    private static let forbiddenHostCharacters = CharacterSet(charactersIn: "\u{0}#%/<>?@[\\]^|*")
+        .union(.whitespacesAndNewlines)
+        .union(.controlCharacters)
+        .union(.illegalCharacters)
+
+    private static let ipv6Characters = CharacterSet(charactersIn: "0123456789abcdefABCDEF:.")
+
     /// Lowercase ASCII (punycode) host without trailing dots, IPv6 in
     /// brackets; `nil` when `host` is empty or not a valid host.
+    ///
+    /// Percent escapes are decoded first (as browsers do: `ch%61se.com` is
+    /// `chase.com`); a host whose escapes do not decode, or that decodes to
+    /// a forbidden code point or a `:` (a port, say), is not valid. A
+    /// bracketed IPv6 literal is not decoded, so zone IDs (`%25en0`) stay
+    /// as they are.
     static func canonicalHost(_ host: String) -> String? {
-        var host = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var host = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if host.hasPrefix("[") {
+            guard host.hasSuffix("]") else { return nil }
+        } else {
+            guard let decoded = host.removingPercentEncoding,
+                  decoded.unicodeScalars.allSatisfy({ !forbiddenHostCharacters.contains($0) })
+            else { return nil }
+            host = decoded
+            if host.contains(":") {
+                // A bare IPv6 address; anything else with a `:` (a port) is invalid.
+                guard host.unicodeScalars.allSatisfy(ipv6Characters.contains) else { return nil }
+                host = "[\(host)]"
+            }
+        }
+        host = host.lowercased()
         while host.hasSuffix(".") { host.removeLast() }
-        if host.contains(":"), !host.hasPrefix("[") { host = "[\(host)]" }
         guard !host.isEmpty, let encoded = URLComponents(string: "https://\(host)/")?.encodedHost,
-              !encoded.isEmpty
+              !encoded.isEmpty, !encoded.contains("%") || host.hasPrefix("[")
         else { return nil }
         return encoded.lowercased()
     }
@@ -101,7 +137,13 @@ public struct Blocklist: Sendable, Equatable {
         }
         if domain.hasPrefix("*.") { domain.removeFirst(2) }
         while domain.hasPrefix(".") { domain.removeFirst() }
-        return canonicalHost(domain)
+        // Any other `*` is invalid (`*`, `com.*`, `a.*.b`), and so is a
+        // single label (`com`, `localhost`), which would exclude a whole
+        // top-level domain; IPv6 literals are the exception.
+        guard !domain.contains("*"), let canonical = canonicalHost(domain),
+              canonical.hasPrefix("[") || canonical.contains(".")
+        else { return nil }
+        return canonical
     }
 }
 
@@ -128,10 +170,10 @@ public enum DefaultExclusions {
         "org.keepassxc.*",
         "in.sinew.*", // Enpass
         "me.proton.pass.*", // Proton Pass
-        "com.nordsec.nordpass.*", // NordPass
-        "com.keepersecurity.*", // Keeper
+        "com.nordsec.nordpass.*", // NordPass (unverified)
+        "com.keepersecurity.*", // Keeper (unverified)
         "com.dashlane.*",
-        "com.markmcguill.strongbox.*", // Strongbox
+        "com.markmcguill.strongbox.*", // Strongbox (unverified)
         "com.hicknhacksoftware.MacPass",
         "com.apple.keychainaccess",
         "com.apple.Passwords" // macOS 15 Passwords app
@@ -147,20 +189,34 @@ public enum DefaultExclusions {
         "com.tdesktop.Telegram", // Telegram Desktop
         "com.facebook.archon.*", // Messenger
         "com.hnc.Discord",
+        "com.hnc.DiscordPTB",
+        "com.hnc.DiscordCanary",
         "im.riot.app", // Element
         "com.wearezeta.zclient.mac", // Wire
-        "ch.threema.*",
+        "ch.threema.*", // Threema (unverified)
         "com.viber.osx",
         "com.tencent.xinWeChat", // WeChat
         "jp.naver.line.mac", // LINE
-        "com.automattic.beeper.*", // Beeper
-        "com.beeper.*"
+        "com.automattic.beeper.*", // Beeper (unverified)
+        "com.beeper.*" // Beeper (unverified)
     ]
 
     /// Window titles of mail apps are email subjects and senders.
     public static let mailApps = [
         "com.apple.mail",
         "com.microsoft.Outlook"
+    ]
+
+    /// Webmail hosts (titles are subjects and senders, as in mail apps).
+    /// iCloud Mail is a path (`icloud.com/mail`) and cannot be matched.
+    public static let mailSites = [
+        "mail.google.com",
+        "outlook.live.com",
+        "outlook.office.com",
+        "outlook.office365.com",
+        "mail.yahoo.com",
+        "mail.proton.me",
+        "app.fastmail.com"
     ]
 
     public static let passwordManagerSites = [
@@ -192,5 +248,5 @@ public enum DefaultExclusions {
     ]
 
     public static var allBundleIDPatterns: [String] { passwordManagerApps + messagingApps + mailApps }
-    public static var allDomains: [String] { passwordManagerSites + messagingSites + bankingSites }
+    public static var allDomains: [String] { passwordManagerSites + messagingSites + mailSites + bankingSites }
 }

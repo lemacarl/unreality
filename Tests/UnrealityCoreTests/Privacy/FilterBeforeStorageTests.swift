@@ -72,6 +72,10 @@ struct FilterBeforeStorageTests {
         add("com.google.Chrome", "\(sentinel) vault", "chrome-extension://aeblfdkhhhdcdjpifhhbdiojplfjncoa/home.html")
         add("com.apple.Safari", "\(sentinel) vault", "safari-web-extension://4A1B2C3D/popup.html")
         add("com.apple.Safari", "\(sentinel) local", "file:///Users/someone/statement.pdf")
+        for url in ["https://ch%61se.com/x?q=1", "https://%63hase.com/", "https://%43HASE.COM/",
+                    "https://chase%2Ecom/", "extension://abc/vault.html", "https://mail.google.com/mail/u/0/"] {
+            add("com.google.Chrome", "\(sentinel) encoded", url)
+        }
         return entries
     }
 

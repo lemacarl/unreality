@@ -21,7 +21,8 @@ struct RedactableURL: CustomStringConvertible, CustomDebugStringConvertible, Cus
     /// Browser-extension pages (for example a password manager's vault in a
     /// tab). Their host is an extension ID, not a site, so they are dropped.
     static let extensionSchemes: Set<String> = [
-        "chrome-extension", "safari-web-extension", "safari-extension", "moz-extension"
+        "chrome-extension", "safari-web-extension", "safari-extension", "moz-extension",
+        "extension", "edge-extension", "opera-extension", "ms-browser-extension"
     ]
     /// Schemes without a host that are kept (as `scheme:` only). Any other
     /// non-`http(s)` URL without a host cannot be checked and is dropped.
@@ -58,7 +59,11 @@ struct RedactableURL: CustomStringConvertible, CustomDebugStringConvertible, Cus
         guard let components = URLComponents(string: raw), components.scheme?.lowercased() == scheme,
               !scheme.isEmpty
         else { return .failure(.uncheckableURL) }
-        let host = components.encodedHost.flatMap(Blocklist.canonicalHost)
+        let rawHost = components.encodedHost ?? ""
+        let host = Blocklist.canonicalHost(rawHost)
+        // A host that is present but not valid (bad escapes, forbidden code
+        // points) cannot be checked.
+        if host == nil, !rawHost.isEmpty { return .failure(.uncheckableURL) }
         guard let host else {
             return hostlessSchemes.contains(scheme)
                 ? .success(RedactableURL(scheme: scheme, host: nil) { _ in scheme + ":" })
