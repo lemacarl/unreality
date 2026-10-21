@@ -14,6 +14,10 @@ import UnrealityCore
 ///   Without permission (or when the policy says no) samples are app-only.
 /// - Unreality's own process is always app-only: the policy is not asked
 ///   and no AX call or observer ever targets our own process.
+/// - Browser URLs (#19): only when the policy allowed the title and the app
+///   is a ``KnownBrowser``, the source asks its `BrowserURLProvider` (if
+///   any) for the active tab's URL: on activation and on every title or
+///   focused-window change, so a tab switch reads the new tab's URL.
 ///
 /// Main-actor bound: workspace notifications are delivered on the main queue
 /// and the observer's run-loop source is added to the main run loop. Release
@@ -39,26 +43,32 @@ public final class WorkspaceActivitySource: ActivitySource {
     private let notificationCenter: NotificationCenter
     private let clock: any WallClock
     private let messagingTimeout: Float
+    private let browserURLProvider: (any BrowserURLProvider)?
     private var policy: WindowTitlePolicy?
     private var handler: (@MainActor (ActivitySample) -> Void)?
     private var frontmost: FrontmostApp?
-    private var lastEmittedTitle: String?
+    private var lastEmitted: (title: String?, url: BrowserURLReading?)?
     // `nonisolated(unsafe)` only so `deinit` can release them: every other
     // access is main-actor isolated, and deinit has exclusive access.
     nonisolated(unsafe) private var activationObserver: (any NSObjectProtocol)?
     nonisolated(unsafe) private var tracking: Tracking?
 
-    /// - Parameter messagingTimeout: seconds to wait for an unresponsive app
-    ///   to answer an Accessibility request before giving up on its title.
+    /// - Parameters:
+    ///   - messagingTimeout: seconds to wait for an unresponsive app to
+    ///     answer an Accessibility request before giving up on its title.
+    ///   - browserURLProvider: reads known browsers' URLs; `nil` reads none
+    ///     (the privacy filter then drops browser titles).
     public init(
         workspace: NSWorkspace = .shared,
         clock: any WallClock = SystemClock(),
-        messagingTimeout: Float = 0.25
+        messagingTimeout: Float = 0.25,
+        browserURLProvider: (any BrowserURLProvider)? = nil
     ) {
         self.workspace = workspace
         notificationCenter = workspace.notificationCenter
         self.clock = clock
         self.messagingTimeout = messagingTimeout
+        self.browserURLProvider = browserURLProvider
     }
 
     deinit {
@@ -96,7 +106,7 @@ public final class WorkspaceActivitySource: ActivitySource {
         policy = nil
         handler = nil
         frontmost = nil
-        lastEmittedTitle = nil
+        lastEmitted = nil
     }
 
     nonisolated private static func describe(_ app: NSRunningApplication) -> FrontmostApp {
@@ -108,13 +118,15 @@ public final class WorkspaceActivitySource: ActivitySource {
         stopTracking()
         frontmost = app
         var title: String?
+        var url: BrowserURLReading?
         // Unreality's own windows are never read: no feedback loop of
         // captured titles, and no AX round trips into our own (main) thread.
         if app.processID != Self.ownProcessID, policy?(app) == true {
             startTracking(app)
             title = focusedWindowTitle()
+            url = browserURL(of: app)
         }
-        emit(trigger, app: app, title: title)
+        emit(trigger, app: app, title: title, url: url)
     }
 
     /// Called from the Accessibility observer callback.
@@ -129,13 +141,21 @@ public final class WorkspaceActivitySource: ActivitySource {
         tracking?.unresponsive = false
         if notification == kAXFocusedWindowChangedNotification { watchFocusedWindow() }
         let title = focusedWindowTitle()
-        guard title != lastEmittedTitle else { return }
-        emit(.titleChanged, app: app, title: title)
+        let url = browserURL(of: app)
+        if let lastEmitted, lastEmitted.title == title, lastEmitted.url == url { return }
+        emit(.titleChanged, app: app, title: title, url: url)
     }
 
-    private func emit(_ trigger: ActivitySample.Trigger, app: FrontmostApp, title: String?) {
-        lastEmittedTitle = title
-        handler?(ActivitySample(timestamp: clock.now(), trigger: trigger, app: app, windowTitle: title))
+    /// Only called after the policy allowed `app`'s title.
+    private func browserURL(of app: FrontmostApp) -> BrowserURLReading? {
+        guard let browserURLProvider, KnownBrowser.isBrowser(app) else { return nil }
+        return browserURLProvider.activeTabURL(of: app)
+    }
+
+    private func emit(_ trigger: ActivitySample.Trigger, app: FrontmostApp, title: String?, url: BrowserURLReading?) {
+        lastEmitted = (title, url)
+        handler?(ActivitySample(timestamp: clock.now(), trigger: trigger, app: app, windowTitle: title,
+                                browserURL: url))
     }
 
     // MARK: Accessibility
