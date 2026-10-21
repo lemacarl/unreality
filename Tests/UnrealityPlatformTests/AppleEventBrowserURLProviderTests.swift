@@ -191,7 +191,7 @@ struct WorkspaceActivitySourceBrowserURLTests {
     "AppleEventBrowserURLProvider integration",
     .enabled(if: ["1", "prompt"].contains(ProcessInfo.processInfo.environment["UNREALITY_BROWSER_TESTS"]))
 )
-struct AppleEventBrowserURLProviderIntegrationTests {
+struct BrowserURLProviderIntegrationTests {
     @Test("running browsers report a permission state and a matching reading", .timeLimit(.minutes(2)))
     func runningBrowsers() async {
         let provider = AppleEventBrowserURLProvider()

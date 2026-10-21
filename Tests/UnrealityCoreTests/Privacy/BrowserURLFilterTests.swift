@@ -70,7 +70,8 @@ struct BrowserURLFilterTests {
           arguments: [
             "https://docs.example.com/a/b?q=1", "https://[2001:DB8::1]:8080/p?q", "https://BÜCHER.de/x",
             "about:blank", "data:text/html,hi", "chrome://settings/appearance", "ftp://example.com/x",
-            "blob:https://example.com/2f1c?x", "view-source:https://example.com/a?b", "filesystem:https://example.com/t/f"
+            "blob:https://example.com/2f1c?x", "view-source:https://example.com/a?b",
+            "filesystem:https://example.com/t/f"
           ])
     func idempotent(_ url: String) throws {
         for mode in [URLRedaction.keepPath, .hostOnly] {
@@ -132,7 +133,8 @@ struct BrowserURLFilterTests {
     ])
     func internalPasswordPages(_ url: String) {
         #expect(rules.filter(sample(.url(url), app: chrome)) == nil)
-        #expect(rules.evaluate(sample(.url(url), app: chrome), until: start + 1, source: "t") == .drop(.excludedBrowserPage))
+        #expect(rules.evaluate(sample(.url(url), app: chrome), until: start + 1, source: "t")
+            == .drop(.excludedBrowserPage))
     }
 
     @Test("a backslash before the query fails closed (browser and Foundation disagree on the host)", arguments: [

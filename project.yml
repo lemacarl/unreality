@@ -45,9 +45,19 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_CFBundleDisplayName: Unreality
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        # Shown in the Automation prompt for each browser (#19, docs/PRIVACY.md).
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: >-
+          Unreality reads the address of the active tab in this browser to group your
+          time by site. Query strings are removed and excluded sites are never stored.
         # Only applied when signing with a real identity; ad-hoc Debug
         # builds do not get the hardened runtime.
         ENABLE_HARDENED_RUNTIME: YES
+    # The hardened runtime blocks Apple Events without this entitlement;
+    # browser URLs (#19) are read with them. XcodeGen writes the file.
+    entitlements:
+      path: App/Unreality.entitlements
+      properties:
+        com.apple.security.automation.apple-events: true
     # Signing lives in the xcconfig (not here) so a gitignored
     # Config/Local.xcconfig can override it; target settings in this file
     # would take precedence over the xcconfig. CI passes

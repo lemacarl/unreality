@@ -41,19 +41,9 @@ public final class AppleEventBrowserURLProvider: BrowserURLProvider {
 
     public func activeTabURL(of app: FrontmostApp) -> BrowserURLReading {
         guard let paths = Self.paths(for: app) else { return .unreadable(.unsupportedBrowser) }
-        switch automationPermission(for: app) {
-        case .granted: break
-        case .denied: return .unreadable(.automationDenied)
-        case .notDetermined: return .unreadable(.automationNotDetermined)
-        case .notRunning, .notApplicable, .unknown: return .unreadable(.failed)
-        }
-        if let modePath = paths.mode {
-            switch client.string(at: modePath, processID: app.processID, timeout: timeout) {
-            case .success("normal"?): break
-            case .success("incognito"?): return .unreadable(.privateWindow)
-            case .success: return .unreadable(.failed) // unknown or missing mode: fail closed
-            case let .failure(error): return .unreadable(Self.unavailability(for: error))
-            }
+        if let refusal = Self.refusal(for: automationPermission(for: app)) { return .unreadable(refusal) }
+        if let modePath = paths.mode, let refusal = windowModeRefusal(modePath, app: app) {
+            return .unreadable(refusal)
         }
         switch client.string(at: paths.url, processID: app.processID, timeout: timeout) {
         case let .success(url?) where !url.isEmpty: return .url(url)
@@ -72,7 +62,28 @@ public final class AppleEventBrowserURLProvider: BrowserURLProvider {
         return Self.permission(for: await client.requestPermission(processID: app.processID))
     }
 
+    /// Why the window's URL must not be read (a private window, or a mode
+    /// that cannot be read: fail closed), or `nil` for a normal window.
+    private func windowModeRefusal(_ path: AppleEventPath, app: FrontmostApp) -> BrowserURLUnavailability? {
+        switch client.string(at: path, processID: app.processID, timeout: timeout) {
+        case .success("normal"?): nil
+        case .success("incognito"?): .privateWindow
+        case .success: .failed
+        case let .failure(error): Self.unavailability(for: error)
+        }
+    }
+
     // MARK: Mapping
+
+    /// Why nothing may be sent with this permission state, or `nil` if granted.
+    static func refusal(for permission: BrowserAutomationPermission) -> BrowserURLUnavailability? {
+        switch permission {
+        case .granted: nil
+        case .denied: .automationDenied
+        case .notDetermined: .automationNotDetermined
+        case .notRunning, .notApplicable, .unknown: .failed
+        }
+    }
 
     /// Where the URL (and, for the Chrome family, the window mode) lives.
     static func paths(for app: FrontmostApp) -> (url: AppleEventPath, mode: AppleEventPath?)? {
@@ -139,23 +150,34 @@ struct AppleEventPath: Hashable, Sendable {
     func specifier() -> NSAppleEventDescriptor? {
         var container = NSAppleEventDescriptor.null()
         for step in steps {
-            guard let next = NSAppleEventDescriptor.record().coerce(toDescriptorType: fourCharCode("obj ")) else {
-                return nil
-            }
+            let next: NSAppleEventDescriptor?
             switch step {
             case let .window(index):
-                next.setDescriptor(NSAppleEventDescriptor(typeCode: fourCharCode("cwin")), forKeyword: fourCharCode("want"))
-                next.setDescriptor(NSAppleEventDescriptor(enumCode: fourCharCode("indx")), forKeyword: fourCharCode("form"))
-                next.setDescriptor(NSAppleEventDescriptor(int32: index), forKeyword: fourCharCode("seld"))
+                // keyAEDesiredClass cWindow, keyAEKeyForm formAbsolutePosition
+                next = Self.objectSpecifier(want: "cwin", form: "indx", data: NSAppleEventDescriptor(int32: index),
+                                            from: container)
             case let .property(code):
-                next.setDescriptor(NSAppleEventDescriptor(typeCode: fourCharCode("prop")), forKeyword: fourCharCode("want"))
-                next.setDescriptor(NSAppleEventDescriptor(enumCode: fourCharCode("prop")), forKeyword: fourCharCode("form"))
-                next.setDescriptor(NSAppleEventDescriptor(typeCode: fourCharCode(code)), forKeyword: fourCharCode("seld"))
+                // keyAEDesiredClass cProperty, keyAEKeyForm formPropertyID
+                next = Self.objectSpecifier(want: "prop", form: "prop",
+                                            data: NSAppleEventDescriptor(typeCode: fourCharCode(code)), from: container)
             }
-            next.setDescriptor(container, forKeyword: fourCharCode("from"))
+            guard let next else { return nil }
             container = next
         }
         return container
+    }
+
+    private static func objectSpecifier(
+        want: String, form: String, data: NSAppleEventDescriptor, from container: NSAppleEventDescriptor
+    ) -> NSAppleEventDescriptor? {
+        guard let specifier = NSAppleEventDescriptor.record().coerce(toDescriptorType: fourCharCode("obj ")) else {
+            return nil
+        }
+        specifier.setDescriptor(NSAppleEventDescriptor(typeCode: fourCharCode(want)), forKeyword: fourCharCode("want"))
+        specifier.setDescriptor(NSAppleEventDescriptor(enumCode: fourCharCode(form)), forKeyword: fourCharCode("form"))
+        specifier.setDescriptor(data, forKeyword: fourCharCode("seld"))
+        specifier.setDescriptor(container, forKeyword: fourCharCode("from"))
+        return specifier
     }
 }
 
