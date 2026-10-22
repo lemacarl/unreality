@@ -106,7 +106,7 @@ struct FilterBeforeStorageTests {
         let filter = PrivacyFilter()
         let coordinator = ActivityCoordinator(
             source: source, captureState: CaptureStateStore(),
-            trust: FakeAccessibilityTrust(state: .trusted), filter: filter
+            trust: FakeAccessibilityTrust(state: .trusted), filter: filter, clock: FakeTime()
         )
         let repository = RecordingRepository()
         var pending: ActivitySample?

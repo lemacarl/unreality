@@ -112,7 +112,8 @@ final class UnrulySource: ActivitySource {
 /// A coordinator wired to fakes (shared with ActivityCoordinatorTests.swift).
 @MainActor
 struct Harness {
-    let source = FakeActivitySource(frontmost: finder, title: "Downloads")
+    let clock = FakeTime()
+    let source: FakeActivitySource
     let store: CaptureStateStore
     let trust: FakeAccessibilityTrust
     let coordinator: ActivityCoordinator
@@ -122,9 +123,12 @@ struct Harness {
         paused: Bool = false,
         filter: any ActivitySampleFilter = AllowAllFilter()
     ) {
+        source = FakeActivitySource(clock: clock, frontmost: finder, title: "Downloads")
         store = CaptureStateStore(initialState: paused ? .paused : .running)
         self.trust = FakeAccessibilityTrust(state: trust)
-        coordinator = ActivityCoordinator(source: source, captureState: store, trust: self.trust, filter: filter)
+        coordinator = ActivityCoordinator(
+            source: source, captureState: store, trust: self.trust, filter: filter, clock: clock
+        )
     }
 }
 

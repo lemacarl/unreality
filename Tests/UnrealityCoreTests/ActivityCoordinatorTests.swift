@@ -70,7 +70,8 @@ struct ActivityCoordinatorTests {
             source: source,
             captureState: CaptureStateStore(),
             trust: FakeAccessibilityTrust(state: .notTrusted),
-            filter: AllowAllFilter()
+            filter: AllowAllFilter(),
+            clock: FakeTime()
         )
         let recorder = Recorder()
         coordinator.start(recorder.record)
@@ -121,7 +122,8 @@ struct ActivityCoordinatorTests {
             source: source,
             captureState: store,
             trust: FakeAccessibilityTrust(state: .trusted),
-            filter: AllowAllFilter()
+            filter: AllowAllFilter(),
+            clock: FakeTime()
         )
         let recorder = Recorder()
         coordinator.start(recorder.record)
@@ -190,7 +192,8 @@ struct ActivityCoordinatorLifecycleTests {
             source: source,
             captureState: CaptureStateStore(),
             trust: FakeAccessibilityTrust(state: .trusted),
-            filter: AllowAllFilter()
+            filter: AllowAllFilter(),
+            clock: FakeTime()
         )
         let recorder = Recorder()
         coordinator.start(recorder.record)
@@ -256,7 +259,8 @@ struct ActivityCoordinatorLifecycleTests {
             source: source,
             captureState: CaptureStateStore(),
             trust: FakeAccessibilityTrust(state: .trusted),
-            filter: AllowAllFilter()
+            filter: AllowAllFilter(),
+            clock: FakeTime()
         )
         let recorder = Recorder()
         coordinator.start(recorder.record)

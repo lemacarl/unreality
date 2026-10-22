@@ -28,6 +28,10 @@ public protocol ActivitySampleFilter: AnyObject {
 /// - The filter decides which titles may be read and which samples pass.
 ///   It is a required parameter with deliberately no pass-through default,
 ///   so nothing can wire the coordinator unfiltered.
+/// - Where tracked activity stops (a sample the filter dropped, a pause, or
+///   `stop`), `startSignals(_:)` delivers an anonymous `ActivityBoundary`
+///   carrying only a timestamp, so span aggregation (#21) ends the previous
+///   span there instead of attributing the time to it.
 @MainActor
 @Observable
 public final class ActivityCoordinator {
@@ -41,7 +45,8 @@ public final class ActivityCoordinator {
     @ObservationIgnored private let captureState: CaptureStateStore
     @ObservationIgnored private let trust: any AccessibilityTrust
     @ObservationIgnored private let filter: any ActivitySampleFilter
-    @ObservationIgnored private var sink: (@MainActor (ActivitySample) -> Void)?
+    @ObservationIgnored private let clock: any WallClock
+    @ObservationIgnored private var sink: (@MainActor (ActivitySignal) -> Void)?
     @ObservationIgnored private var subscription: CaptureStateSubscription?
 
     private static let ownProcessID = ProcessInfo.processInfo.processIdentifier
@@ -50,19 +55,37 @@ public final class ActivityCoordinator {
         source: any ActivitySource,
         captureState: CaptureStateStore,
         trust: any AccessibilityTrust,
-        filter: any ActivitySampleFilter
+        filter: any ActivitySampleFilter,
+        clock: any WallClock
     ) {
         self.source = source
         self.captureState = captureState
         self.trust = trust
         self.filter = filter
+        self.clock = clock
         accessibilityTrust = trust.currentState()
     }
 
-    /// Starts delivering filtered samples to `sink` (on the main actor).
-    /// Calling it again replaces the sink (and, while running, restarts the
-    /// source with a fresh snapshot).
+    /// Starts delivering filtered samples to `sink` (on the main actor),
+    /// without boundaries. Calling it again replaces the sink (and, while
+    /// running, restarts the source with a fresh snapshot).
     public func start(_ sink: @escaping @MainActor (ActivitySample) -> Void) {
+        startSignals { signal in
+            if case let .sample(sample) = signal { sink(sample) }
+        }
+    }
+
+    /// Like `start(_:)`, also delivering an anonymous `ActivityBoundary`
+    /// where tracked activity stops: at the timestamp of a sample the filter
+    /// dropped (for example an excluded app became frontmost), and at the
+    /// clock's time when capture is paused or `stop()` is called. Feed it to
+    /// `ActivityPipeline.receive(_:)`. Calling it again while running first
+    /// gives the previous sink a final boundary, as `stop()` would, so it
+    /// keeps nothing open; the new sink then gets a fresh snapshot.
+    public func startSignals(_ sink: @escaping @MainActor (ActivitySignal) -> Void) {
+        if isActive, !captureState.isPaused, let previous = self.sink {
+            previous(.boundary(ActivityBoundary(timestamp: clock.now())))
+        }
         self.sink = sink
         updateTrust()
         if !isActive {
@@ -75,11 +98,14 @@ public final class ActivityCoordinator {
     /// Stops the source; nothing is delivered afterwards.
     public func stop() {
         guard isActive else { return }
+        let lastSink = sink
         isActive = false
         subscription?.cancel()
         subscription = nil
         sink = nil
         source.stop()
+        // Paused already delivered its boundary.
+        if !captureState.isPaused { lastSink?(.boundary(ActivityBoundary(timestamp: clock.now()))) }
     }
 
     /// Re-reads the trust state, for example when the app becomes active
@@ -104,7 +130,9 @@ public final class ActivityCoordinator {
     private func captureStateChanged(to state: CaptureState) {
         guard isActive else { return }
         switch state {
-        case .paused: source.stop()
+        case .paused:
+            source.stop()
+            sink?(.boundary(ActivityBoundary(timestamp: clock.now())))
         case .running: startSource()
         }
     }
@@ -132,7 +160,11 @@ public final class ActivityCoordinator {
             if sample.trigger == .titleChanged { return }
             sample.windowTitle = nil
         }
-        guard let filtered = filter.filter(sample) else { return }
-        sink(filtered)
+        guard let filtered = filter.filter(sample) else {
+            // Anonymous: only the time, never what was dropped.
+            sink(.boundary(ActivityBoundary(timestamp: sample.timestamp)))
+            return
+        }
+        sink(.sample(filtered))
     }
 }
